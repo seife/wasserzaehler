@@ -1,4 +1,3 @@
-
 /*
   ESP8266/32 to interface a LJ18A3-8-Z/BX inductive
   sensor to count impulses from a water meter.
@@ -42,8 +41,11 @@ const char *_s[4] = {
 };
 
 struct eeprom_state {
-  char sig[8]; /* WATER */
-  int pulses;
+  char sig[8];  /* WATER */
+  int pulses;   /* 4 bytes */
+  int pulses_sent;
+  char vzhost[48]; /* hostname */
+  char vzurl[192]; /* total: 256 */
 };
 
 int state = STATE_DISC;
@@ -134,6 +136,7 @@ ESP8266WebServer server(80);
 #else
 WebServer server(80);
 #endif
+WiFiClient client;
 
 void start_WPS() {
   Serial.println("Starting WPS");
@@ -159,7 +162,7 @@ void start_WPS() {
   esp_wifi_wps_start(0);
   while (state == STATE_WPS) {
     delay(500);
-    Serial.printl(".");
+    Serial.println(".");
   }
 #endif
   digitalWrite(LED_BUILTIN, LED_OFF);
@@ -187,6 +190,7 @@ volatile int last_intr = 0;
 //volatile int hilo = HIGH;
 int last_commit = 0;
 int last_pulse = 0;
+int last_push = 0;
 eeprom_state persist;
 
 void ICACHE_RAM_ATTR isr(void) {
@@ -210,6 +214,38 @@ void ICACHE_RAM_ATTR isr(void) {
   //}
 }
 
+void log_bad_uuid(char bad, int pos) {
+  Serial.printf("check_uuid: bad byte 0x%02x (%c) at position %d\n", bad, (bad > 32) ? bad : ' ', pos);
+}
+
+bool check_uuid(const char *uuid, bool empty_ok) {
+  // b587a8f0-dfb1-11ea-9c2c-adb60f050b82
+  // 012345678901234567890123456789012345
+  // 0         1         2         3
+  int i = 0;
+  if (uuid[0] == '\0')
+    return empty_ok;
+  while(i < 36) {
+    if (!((uuid[i] == '-') ||
+          (uuid[i] >= '0' && uuid[i] <= '9') ||
+          (uuid[i] >= 'a' && uuid[i] <= 'f')))
+      log_bad_uuid(uuid[i], i);
+      return false;
+    if ((uuid[i] == '-') &&
+        (i != 8 && i != 13 && i != 18 && i != 23))
+      log_bad_uuid(uuid[i], i);
+      return false;
+    i++;
+  }
+  if (uuid[i] != '\0')
+    return false;
+  return true;
+}
+
+bool check_vzserver() {
+  return (persist.vzhost[0] != '\0' && persist.vzurl[0] != '\0');
+}
+
 void handle_index() {
   String index = "Wasserzaehler\n";
   String IP = WiFi.localIP().toString();
@@ -217,6 +253,14 @@ void handle_index() {
   index += "Uptime: " + String(millis()) + "\n";
   index += "http://" + IP + "/pulses for plain pulse count\n";
   index += "http://" + IP + "/pulses?set=xxxx to set pulse count\n";
+  index += "http://" + IP + "/vz?host=xxxx to set volkszaehler middleware host\n";
+  index += "http://" + IP + "/vz?url=xxxx to set volkszaehler middleware url\n";
+  if (check_vzserver()) {
+    index += "\ncurrent volkszaehler URL:\n";
+    index += "http://" + String(persist.vzhost) + String(persist.vzurl) + "\n";
+    index += "Last push: " + String(last_push) + "\n";
+    index += "Last value: " + String(persist.pulses_sent) + "\n";
+  }
   server.send(200, "text/plain", index);
 }
 
@@ -242,26 +286,156 @@ void handle_pulses() {
   server.send(ret, "text/plain", message + "\n");
 }
 
+bool checkhost(const char *host, int len) {
+  int i;
+  const char *c = host;
+  if (*c == '-' || *c == '.')
+    return false;
+  for (i = 0; i < len; i++, c++) {
+    if ((*c < '0' || *c > '9') &&
+        (*c < 'a' || *c > 'z') &&
+        (*c < 'A' || *c > 'Z') &&
+        (*c != '-') && (*c != '.'))
+      return false;
+  }
+  return true;
+}
+
+void handle_vz() {
+  String message = "";
+  int ret = 200;
+  bool change = false;
+  if (server.hasArg("host")) {
+    String host = server.arg("host");
+    if (host.length() > sizeof(persist.vzhost) -1) {
+      message = "hostname too long (max " + String(sizeof(persist.vzhost)-1) + " bytes)\n";
+    } else if (!checkhost(host.c_str(), host.length())) {
+      message = "invalid hostname (only a-z,A-Z,- allowed)\n";
+    } else {
+      message = "Set hostname to " + host + "\n";
+      strcpy(persist.vzhost, host.c_str());
+      change = true;
+    }
+    message += "\n";
+  }
+  if (server.hasArg("url")) {
+    String url = server.arg("url");
+    if (url.length() > sizeof(persist.vzurl) -1) {
+      message = "URL path too long (max " + String(sizeof(persist.vzurl)-1) + " bytes)\n";
+    } else if (url.length() > 0 && url[0]!= '/') {
+      message += "url path must start with '/'\n";
+    } else {
+      message += "Set URL to " + url + "\n";
+      strcpy(persist.vzurl, url.c_str());
+      change = true;
+    }
+    message += "\n";
+  }
+  message += "VZ host: " + String(persist.vzhost) + "\n";
+  message += "VZ URL:  " + String(persist.vzurl) + "\n";
+  server.send(ret, "text/plain", message);
+  if (change) {
+    EEPROM.put(0, persist);
+    EEPROM.commit();
+  }
+}
+
+long code_from_str(const String s) {
+  if (!s.startsWith("HTTP/1."))
+    return -1;
+  String c = s.substring(9);
+  if (c.length() < 3)
+    return -1;
+  return c.toInt();
+}
+
+bool vz_push(int count) {
+  String response = "";
+  if (!check_vzserver())
+    return false;
+  if (! client.connect(persist.vzhost, 80)) {
+    Serial.println("Connect to volkszaehler server failed");
+    client.stop();
+    return false;
+  }
+  int p = persist.pulses_sent;
+  if (count > p) {
+    p = count;
+  }
+  String cmd = "GET " + String(persist.vzurl);
+  cmd += "?operation=add&value=" + String(p);
+  Serial.println(cmd);
+  cmd += " HTTP/1.1\r\nHost: " + String(persist.vzhost);
+  cmd += "\r\n";
+  cmd += "Content-Type: application/json\r\n";
+  cmd += "Connection: keep-alive\r\nAccept: */*\r\n\r\n";
+  client.print(cmd);
+  unsigned long timeout = millis();
+  while (client.available() == 0) {
+    if (millis() - timeout > 5000) {
+      Serial.println(">>> Client Timeout !");
+      break;
+    }
+  }
+  bool found = false;
+  while (client.available()) {
+    char c = static_cast<char>(client.read());
+    /* HTTP/1.1 200 OK */
+    if (response.length() < 13) {
+      response += c;
+    }
+    // Serial.printf("%c", c);
+  }
+  client.stop();
+  Serial.println("Return line: " + response);
+  long ret = code_from_str(response);
+  if (ret > 0) {
+    Serial.println("HTTP return code: " + String(ret));
+  }
+  if (ret == 200) {
+    persist.pulses_sent = p;
+    return true;
+  }
+  return false;
+}
+
 void setup() {
   Serial.begin(115200);
+  delay(1000);
   // Serial.setDebugOutput(true); // send additional debug infos to serial
-  Serial.println(); // bootloader has clobbered serial monitor
+  for (int i=0; i < 10; i++)
+    Serial.println("xxxxxxxxxxxxxxxxxxxxxxxxxxxx"); // bootloader has clobbered serial monitor
   delay(100);
   EEPROM.begin(512);
   EEPROM.get(0, persist);
   if (persist.sig[0] == 0xff || memcmp(persist.sig, "WATER", 5)) {
     Serial.println("Clearing eeprom...");
     Serial.println(persist.sig);
-    memset(persist.sig, 0, sizeof(persist.sig));
-    strcpy(persist.sig, "WATER");
+    memset(&persist, 0, sizeof(persist));
+    strcpy(persist.sig, "WATER1");
     persist.pulses = 0;
+    persist.pulses_sent = 0;
     EEPROM.put(0,persist);
     EEPROM.commit();
   } else {
+    int i;
+    bool commit = false;
     Serial.print("Read pulses from eeprom: ");
     Serial.println(persist.pulses);
     pulses = persist.pulses;
-    last_pulse = pulses;
+    if (persist.sig[5] < '1') { // update
+      Serial.println("updating config from " +String(persist.sig)+ " to WATER1\n");
+      strcpy(persist.sig, "WATER1");
+      persist.pulses_sent = pulses;
+      memset(persist.vzhost, 0, sizeof(persist.vzhost));
+      memset(persist.vzurl, 0, sizeof(persist.vzurl));
+      EEPROM.put(0,persist);
+      EEPROM.commit();
+    }
+    Serial.print("VZhost: ");
+    Serial.println(persist.vzhost);
+    Serial.print("VZurl:  ");
+    Serial.println(persist.vzurl);
   }
   last_commit = millis();
   Serial.println();
@@ -280,6 +454,7 @@ void setup() {
   server.on("/", handle_index);
   server.on("/pulses", handle_pulses);
   server.on("/uptime", handle_uptime);
+  server.on("/vz", handle_vz);
   server.begin();
   attachInterrupt(digitalPinToInterrupt(inputPin), isr, FALLING);
 }
@@ -301,8 +476,14 @@ void loop() {
     Serial.println("Triggering WPS!");
     start_WPS();
   }
-  if (persist.pulses != pulses) {
+  
+  bool update_push = false;
+  if (check_vzserver() && millis() - last_push > 60000)
+    update_push = true;
+  if (persist.pulses != pulses || update_push) {
     Serial.printf("Pulse update: %d\n", pulses);
+    if (vz_push(pulses))
+      last_push = millis();
   }
   persist.pulses = pulses;
   if (millis() - last_commit > 60000) {
