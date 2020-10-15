@@ -214,34 +214,6 @@ void ICACHE_RAM_ATTR isr(void) {
   //}
 }
 
-void log_bad_uuid(char bad, int pos) {
-  Serial.printf("check_uuid: bad byte 0x%02x (%c) at position %d\n", bad, (bad > 32) ? bad : ' ', pos);
-}
-
-bool check_uuid(const char *uuid, bool empty_ok) {
-  // b587a8f0-dfb1-11ea-9c2c-adb60f050b82
-  // 012345678901234567890123456789012345
-  // 0         1         2         3
-  int i = 0;
-  if (uuid[0] == '\0')
-    return empty_ok;
-  while(i < 36) {
-    if (!((uuid[i] == '-') ||
-          (uuid[i] >= '0' && uuid[i] <= '9') ||
-          (uuid[i] >= 'a' && uuid[i] <= 'f')))
-      log_bad_uuid(uuid[i], i);
-      return false;
-    if ((uuid[i] == '-') &&
-        (i != 8 && i != 13 && i != 18 && i != 23))
-      log_bad_uuid(uuid[i], i);
-      return false;
-    i++;
-  }
-  if (uuid[i] != '\0')
-    return false;
-  return true;
-}
-
 bool check_vzserver() {
   return (persist.vzhost[0] != '\0' && persist.vzurl[0] != '\0');
 }
