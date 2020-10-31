@@ -219,8 +219,15 @@ bool check_vzserver() {
 }
 
 void handle_index() {
-  String index = "Wasserzaehler\n";
+  // TODO: use server.hostHeader()?
   String IP = WiFi.localIP().toString();
+  String index =
+    "<!DOCTYPE HTML><html><head>"
+    "<title>Wasserzaehler</title>"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "</head><body>"
+    "<H1>Wasserzaehler</H1>"
+    "<pre>";
   index += "Pulse:  " + String(pulses) + "\n";
   index += "Uptime: " + String(millis()) + "\n";
   index += "http://" + IP + "/pulses for plain pulse count\n";
@@ -233,7 +240,10 @@ void handle_index() {
     index += "Last push: " + String(last_push) + "\n";
     index += "Last value: " + String(persist.pulses_sent) + "\n";
   }
-  server.send(200, "text/plain", index);
+  index += "</pre>"
+    "<br><a href=\"/config.html\">Configuration page</a>"
+    "</body>";
+  server.send(200, "text/html", index);
 }
 
 void handle_config() {
