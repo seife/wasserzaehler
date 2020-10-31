@@ -290,8 +290,12 @@ void handle_pulses() {
   if (server.hasArg("set")) {
     long p = server.arg("set") . toInt();
     if (p != 0) {
-      message = "pulses value set to " + String(p);
-      pulses = p;
+      if (p != pulses) {
+        message = "pulses value set to " + String(p);
+        pulses = p;
+      } else {
+        message = "pulse value unchanged " + String(p);
+      }
     } else {
       ret = 500;
       message = "invalid pulse value '" + server.arg("set") + "'";
@@ -328,9 +332,14 @@ void handle_vz() {
     } else if (!checkhost(host.c_str(), host.length())) {
       message = "invalid hostname (only a-z,A-Z,- allowed)\n";
     } else {
-      message = "Set hostname to " + host + "\n";
-      strcpy(persist.vzhost, host.c_str());
-      change = true;
+      const char *chost = host.c_str();
+      if (strcmp(persist.vzhost, chost)) {
+        message = "Set hostname to " + host + "\n";
+        strcpy(persist.vzhost, chost);
+        change = true;
+      } else {
+        message = "hostname not changed\n";
+      }
     }
     message += "\n";
   }
@@ -341,9 +350,14 @@ void handle_vz() {
     } else if (url.length() > 0 && url[0]!= '/') {
       message += "url path must start with '/'\n";
     } else {
-      message += "Set URL to " + url + "\n";
-      strcpy(persist.vzurl, url.c_str());
-      change = true;
+      const char *curl = url.c_str();
+      if (strcmp(persist.vzurl, curl)) {
+        message += "Set URL to " + url + "\n";
+        strcpy(persist.vzurl, curl);
+        change = true;
+      } else {
+        message += "URL not changed\n";
+      }
     }
     message += "\n";
   }
