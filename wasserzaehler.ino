@@ -236,6 +236,40 @@ void handle_index() {
   server.send(200, "text/plain", index);
 }
 
+void handle_config() {
+  String resp =
+    "<!DOCTYPE HTML><html><head>"
+    "<title>Wasserzaehler Configuration</title>"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "</head><body>"
+    "<H1>Wasserzaehler Configuration</H1>"
+    "<table>"
+    "<form action=\"/vz\">"
+      "<tr>"
+        "<td>Volkszaehler Hostname:</td><td><input type=\"text\" name=\"host\" value=\"";
+  resp += String(persist.vzhost);
+  resp += "\"></td>"
+      "</tr><tr>"
+        "<td>Volkszaehler URL:</td><td><input type=\"text\" name=\"url\" value=\"";
+  resp += String(persist.vzurl);
+  resp += "\"></td>"
+        "<td><input type=\"submit\" value=\"Submit\"></td>"
+      "</tr>"
+    "</form>"
+    "<tr><td><h2>Pulse correction</h2></td></tr>"
+    "<form action=\"/pulses\">"
+      "<tr>"
+        "<td>Pulses:</td><td><input type=\"text\" name=\"set\" value=\"";
+  resp += String(pulses);
+  resp += "\"></td>"
+        "<td><input type=\"submit\" value=\"Submit\"></td>"
+      "</tr>"
+    "</form>"
+    "</table>"
+    "</body></html>\n";
+  server.send(200, "text/html", resp);
+}
+
 void handle_uptime() {
   server.send(200, "text/plain", String(millis()) + "\n");
 }
@@ -427,6 +461,7 @@ void setup() {
   server.on("/pulses", handle_pulses);
   server.on("/uptime", handle_uptime);
   server.on("/vz", handle_vz);
+  server.on("/config.html", handle_config);
   server.begin();
   attachInterrupt(digitalPinToInterrupt(inputPin), isr, FALLING);
 }
