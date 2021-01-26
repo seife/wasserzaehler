@@ -190,16 +190,15 @@ void WiFiStatusCheck() {
 }
 
 volatile int pulses = 0;
-volatile int last_debounce = 0;
 volatile int hilo;
 volatile bool last_state;
-volatile uint32_t debounce_timeout = 0;
-int last_commit = 0;
 int last_pulse = 0;
-int last_push = 0;
+volatile unsigned long last_debounce = 0;
+unsigned long last_commit = 0;
+unsigned long last_push = 0;
 eeprom_state persist;
 
-int debounce_delay = 100; // milliseconds
+unsigned int debounce_delay = 100; // milliseconds
 
 void ICACHE_RAM_ATTR isr(void) {
   int in = digitalRead(inputPin);
@@ -225,7 +224,7 @@ bool check_vzserver() {
 
 void handle_index() {
   // TODO: use server.hostHeader()?
-  uint32_t uptime=millis();
+  unsigned long uptime = millis();
   String IP = WiFi.localIP().toString();
   String index =
     "<!DOCTYPE HTML><html><head>"
@@ -557,7 +556,7 @@ void loop() {
   }
   persist.pulses = pulses;
   if (millis() - last_commit > 60000) {
-    Serial.printf("COMMIT! %d last_p: %d, pulse: %d\n", millis() - last_commit, last_pulse, persist.pulses);
+    Serial.printf("COMMIT! %lu last_p: %d, pulse: %d\n", millis() - last_commit, last_pulse, persist.pulses);
     if (persist.pulses != last_pulse) {
       EEPROM.put(0,persist);
       EEPROM.commit();
