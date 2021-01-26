@@ -225,6 +225,7 @@ bool check_vzserver() {
 
 void handle_index() {
   // TODO: use server.hostHeader()?
+  uint32_t uptime=millis();
   String IP = WiFi.localIP().toString();
   String index =
     "<!DOCTYPE HTML><html><head>"
@@ -234,7 +235,7 @@ void handle_index() {
     "<H1>Wasserzaehler</H1>"
     "<pre>";
   index += "Pulse:  " + String(pulses) + "\n";
-  index += "Uptime: " + String(millis()) + "\n";
+  index += "Uptime: " + String(uptime) + "\n";
   index += "http://" + IP + "/pulses for plain pulse count\n";
   index += "http://" + IP + "/pulses?set=xxxx to set pulse count\n";
   index += "http://" + IP + "/vz?host=xxxx to set volkszaehler middleware host\n";
@@ -242,7 +243,7 @@ void handle_index() {
   if (check_vzserver()) {
     index += "\ncurrent volkszaehler URL:\n";
     index += "http://" + String(persist.vzhost) + String(persist.vzurl) + "\n";
-    index += "Last push: " + String(last_push) + "\n";
+    index += "Last push: " + String(last_push) + " (" + String(uptime - last_push) + "ms ago)\n";
     index += "Last value: " + String(persist.pulses_sent) + "\n";
   }
   index += "</pre>"
