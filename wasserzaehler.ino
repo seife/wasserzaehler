@@ -190,32 +190,33 @@ void WiFiStatusCheck() {
 }
 
 volatile int pulses = 0;
-volatile int last_intr = 0;
-//volatile int hilo = HIGH;
+volatile int last_debounce = 0;
+volatile int hilo;
+volatile bool last_state;
+volatile uint32_t debounce_timeout = 0;
 int last_commit = 0;
 int last_pulse = 0;
 int last_push = 0;
 eeprom_state persist;
 
+int debounce_delay = 100; // milliseconds
+
 void ICACHE_RAM_ATTR isr(void) {
-  //int in = digitalRead(inputPin);
-  //if (hilo != in) {
-  if (millis() - last_intr > 20) {
-    last_intr = millis();
-    //hilo = in;
+  int in = digitalRead(inputPin);
+  if (hilo == in)
+    return;
+  boolean debounce = false;
+  if (millis() - last_debounce < debounce_delay)
+    debounce = true;
+
+  last_debounce = millis();
+
+  if (debounce)
+    return;
+
+  hilo = in;
+  if (hilo)
     pulses++;
-#if 0
-    Serial.print("IRQ! ");
-    //Serial.print(hilo);
-    //Serial.print(" ");
-    Serial.print(last_intr);
-    Serial.print(" ");
-    Serial.print(pulses);
-    Serial.print(" ");
-    Serial.println(millis());
-#endif
-  }
-  //}
 }
 
 bool check_vzserver() {
@@ -491,7 +492,7 @@ void setup() {
   server.on("/vz", handle_vz);
   server.on("/config.html", handle_config);
   server.begin();
-  attachInterrupt(digitalPinToInterrupt(inputPin), isr, FALLING);
+  attachInterrupt(digitalPinToInterrupt(inputPin), isr, CHANGE);
 }
 
 int i = 0;
