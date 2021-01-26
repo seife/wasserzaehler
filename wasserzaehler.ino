@@ -272,7 +272,7 @@ void handle_config() {
       "</tr>"
     "</form>"
     "<tr><td><h2>Pulse correction</h2></td></tr>"
-    "<form action=\"/pulses\">"
+    "<form action=\"/pulses.html\">"
       "<tr>"
         "<td>Pulses:</td><td><input type=\"text\" name=\"set\" value=\"";
   resp += String(pulses);
@@ -309,6 +309,37 @@ void handle_pulses() {
     message = String(pulses);
   }
   server.send(ret, "text/plain", message + "\n");
+}
+
+void handle_pulses_html() {
+  String message =
+    "<!DOCTYPE HTML><html><head>"
+    "<title>Pulses set</title>"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+    "</head><body>"
+    "<H1>Pulses set</H1>"
+    "<pre>";
+  int ret = 200;
+  if (server.hasArg("set")) {
+    long p = server.arg("set") . toInt();
+    if (p != 0) {
+      if (p != pulses) {
+        message += "pulses value set to " + String(p);
+        pulses = p;
+      } else {
+        message += "pulse value unchanged " + String(p);
+      }
+    } else {
+      ret = 500;
+      message += "invalid pulse value '" + server.arg("set") + "'";
+    }
+  } else {
+    message += String(pulses);
+  }
+  message += "</pre>"
+    "<br><a href=\"/index.html\">Main page</a>"
+    "</body>";
+  server.send(ret, "text/html", message);
 }
 
 bool checkhost(const char *host, int len) {
@@ -487,7 +518,9 @@ void setup() {
   WiFi.begin();
 
   server.on("/", handle_index);
+  server.on("/index.html", handle_index);
   server.on("/pulses", handle_pulses);
+  server.on("/pulses.html", handle_pulses_html);
   server.on("/uptime", handle_uptime);
   server.on("/vz", handle_vz);
   server.on("/config.html", handle_config);
