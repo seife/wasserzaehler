@@ -443,7 +443,6 @@ bool vz_push(int count) {
       break;
     }
   }
-  bool found = false;
   while (client.available()) {
     char c = static_cast<char>(client.read());
     /* HTTP/1.1 200 OK */
@@ -484,8 +483,6 @@ void setup() {
     EEPROM.put(0,persist);
     EEPROM.commit();
   } else {
-    int i;
-    bool commit = false;
     Serial.print("Read pulses from eeprom: ");
     Serial.println(persist.pulses);
     pulses = persist.pulses;
