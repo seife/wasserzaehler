@@ -27,6 +27,11 @@
   or via console: curl -F "image=@firmware.bin" http://hostname/update
 */
 
+#if __has_include("wasserzaehler-version.h") && __has_include(<stdint.h>)
+#include "wasserzaehler-version.h"
+#else
+#define WASSER_VERSION "unknown"
+#endif
 
 int buttonPin = 0; /* button on GPIO0 */
 int inputPin = 5;  /* GPIO5 has a pullup resistor */
@@ -205,6 +210,8 @@ unsigned long last_commit = 0;
 unsigned long last_push = 0;
 eeprom_state persist;
 
+const String sysinfo("Software version: " WASSER_VERSION ", built at: " __DATE__ " " __TIME__);
+
 unsigned int debounce_delay = 100; // milliseconds
 
 void ICACHE_RAM_ATTR isr(void) {
@@ -278,6 +285,7 @@ void handle_index() {
   }
   index += "</pre>\n"
     "<br>\n<a href=\"/config.html\">Configuration page</a>\n"
+    "<p>" + sysinfo + "\n"
     "</body>\n";
   server.send(200, "text/html", index);
 }
@@ -315,6 +323,7 @@ void handle_config() {
     "</form>\n"
     "</table>\n"
     "<p><a href=\"/update\">Software Update</a>\n"
+    "<p>" + sysinfo + "\n"
     "</body>\n</html>\n";
   server.send(200, "text/html", resp);
 }
