@@ -225,6 +225,28 @@ void ICACHE_RAM_ATTR isr(void) {
     pulses++;
 }
 
+uint32_t uptime_sec()
+{
+#ifdef ESP8266
+  return (micros64()/(int64_t)1000000);
+#else
+  return (esp_timer_get_time()/(int64_t)1000000);
+#endif
+}
+
+String time_string(void)
+{
+  uint32_t now = uptime_sec();
+  char timestr[10];
+  String ret = "";
+  if (now >= 24*60*60)
+      ret += String(now / (24*60*60)) + "d ";
+  now %= 24*60*60;
+  snprintf(timestr, 10, "%02d:%02d:%02d", now / (60*60), (now % (60*60)) / 60, now % 60);
+  ret += String(timestr);
+  return ret;
+}
+
 bool check_vzserver() {
   return (persist.vzhost[0] != '\0' && persist.vzurl[0] != '\0');
 }
@@ -243,7 +265,7 @@ void handle_index() {
     "<H1>Wasserzaehler</H1>\n"
     "<pre>";
   index += "Pulse:  " + String(pulses) + "\n";
-  index += "Uptime: " + String(uptime) + "\n";
+  index += "Uptime: " + time_string() + "\n";
   index += "http://" + IP + "/pulses for plain pulse count\n";
   index += "http://" + IP + "/pulses?set=xxxx to set pulse count\n";
   index += "http://" + IP + "/vz?host=xxxx to set volkszaehler middleware host\n";
