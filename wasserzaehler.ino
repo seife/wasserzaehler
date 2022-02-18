@@ -234,11 +234,13 @@ void handle_index() {
   unsigned long uptime = millis();
   String IP = WiFi.localIP().toString();
   String index =
-    "<!DOCTYPE HTML><html><head>"
-    "<title>Wasserzaehler</title>"
-    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    "</head><body>"
-    "<H1>Wasserzaehler</H1>"
+    "<!DOCTYPE HTML><html lang=\"en\">\n<head>\n"
+    "<meta charset=\"utf-8\">\n"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    "<meta name=\"description\" content=\"my water meter\">\n"
+    "<title>Wasserzaehler</title>\n"
+    "</head>\n<body>\n"
+    "<H1>Wasserzaehler</H1>\n"
     "<pre>";
   index += "Pulse:  " + String(pulses) + "\n";
   index += "Uptime: " + String(uptime) + "\n";
@@ -252,44 +254,46 @@ void handle_index() {
     index += "Last push: " + String(last_push) + " (" + String(uptime - last_push) + "ms ago)\n";
     index += "Last value: " + String(persist.pulses_sent) + "\n";
   }
-  index += "</pre>"
-    "<br><a href=\"/config.html\">Configuration page</a>"
-    "</body>";
+  index += "</pre>\n"
+    "<br>\n<a href=\"/config.html\">Configuration page</a>\n"
+    "</body>\n";
   server.send(200, "text/html", index);
 }
 
 void handle_config() {
   String resp =
-    "<!DOCTYPE HTML><html><head>"
-    "<title>Wasserzaehler Configuration</title>"
-    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-    "</head><body>"
-    "<H1>Wasserzaehler Configuration</H1>"
-    "<table>"
+    "<!DOCTYPE HTML><html lang=\"en\">\n<head>\n"
+    "<meta charset=\"utf-8\">\n"
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
+    "<meta name=\"description\" content=\"water meter configuration\">\n"
+    "<title>Wasserzaehler Configuration</title>\n"
+    "</head>\n<body>\n"
+    "<H1>Wasserzaehler Configuration</H1>\n"
+    "<table>\n"
     "<form action=\"/vz\">"
       "<tr>"
-        "<td>Volkszaehler Hostname:</td><td><input type=\"text\" name=\"host\" value=\"";
+        "<td>Volkszaehler Hostname:</td><td><input name=\"host\" value=\"";
   resp += String(persist.vzhost);
   resp += "\"></td>"
-      "</tr><tr>"
-        "<td>Volkszaehler URL:</td><td><input type=\"text\" name=\"url\" value=\"";
+      "</tr>\n<tr>"
+        "<td>Volkszaehler URL:</td><td><input name=\"url\" value=\"";
   resp += String(persist.vzurl);
   resp += "\"></td>"
-        "<td><input type=\"submit\" value=\"Submit\"></td>"
-      "</tr>"
-    "</form>"
-    "<tr><td><h2>Pulse correction</h2></td></tr>"
+        "<td><button type=\"submit\">Submit</button></td>"
+      "</tr>\n"
+    "</form>\n"
+    "<tr><td><h2>Pulse correction</h2></td></tr>\n"
     "<form action=\"/pulses.html\">"
       "<tr>"
-        "<td>Pulses:</td><td><input type=\"text\" name=\"set\" value=\"";
+        "<td>Pulses:</td><td><input name=\"set\" value=\"";
   resp += String(pulses);
   resp += "\"></td>"
-        "<td><input type=\"submit\" value=\"Submit\"></td>"
+        "<td><button type=\"submit\">Submit</button></td>"
       "</tr>"
-    "</form>"
-    "</table>"
-    "<p><a href=\"/update\">Software Update</a>"
-    "</body></html>\n";
+    "</form>\n"
+    "</table>\n"
+    "<p><a href=\"/update\">Software Update</a>\n"
+    "</body>\n</html>\n";
   server.send(200, "text/html", resp);
 }
 
