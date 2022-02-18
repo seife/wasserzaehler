@@ -22,6 +22,9 @@
   is now used with an ESP8266. The ESP32 code paths
   are not really tested and just kept for possible
   future reuse!
+
+  http update either via browser: http://hostname/update
+  or via console: curl -F "image=@firmware.bin" http://hostname/update
 */
 
 
@@ -59,12 +62,14 @@ int state = STATE_DISC;
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
+#include <ESP8266HTTPUpdateServer.h>
 #define LED_ON LOW
 #define LED_OFF HIGH
 #else
 #include "WiFi.h"
 #include "esp_wps.h"
 #include <WebServer.h>
+#include <HTTPUpdateServer.h>
 #define LED_ON HIGH
 #define LED_OFF LOW
 
@@ -137,8 +142,10 @@ void WiFiEvent(WiFiEvent_t event, system_event_info_t info) {
 
 #ifdef ESP8266
 ESP8266WebServer server(80);
+ESP8266HTTPUpdateServer httpUpdater;
 #else
 WebServer server(80);
+HTTPUpdateServer httpUpdater;
 #endif
 WiFiClient client;
 
@@ -521,6 +528,7 @@ void setup() {
   server.on("/uptime", handle_uptime);
   server.on("/vz", handle_vz);
   server.on("/config.html", handle_config);
+  httpUpdater.setup(&server);
   server.begin();
   attachInterrupt(digitalPinToInterrupt(inputPin), isr, CHANGE);
 }
