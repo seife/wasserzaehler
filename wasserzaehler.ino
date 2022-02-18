@@ -288,6 +288,7 @@ void handle_config() {
       "</tr>"
     "</form>"
     "</table>"
+    "<p><a href=\"/update\">Software Update</a>"
     "</body></html>\n";
   server.send(200, "text/html", resp);
 }
