@@ -52,6 +52,7 @@ const char *_s[4] = {
   "1010101010"  // FAIL
 };
 
+/* old */
 struct eeprom_state {
   char sig[8];  /* WATER */
   int pulses;   /* 4 bytes */
@@ -60,9 +61,16 @@ struct eeprom_state {
   char vzurl[192]; /* total: 256 */
 };
 
+/* new */
+uint32_t g_pulses;
+uint32_t g_pulses_sent;
+String g_vzhost;
+String g_vzurl;
+
 int state = STATE_DISC;
 
 #include <EEPROM.h>
+#include <Preferences.h>
 
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
@@ -208,7 +216,7 @@ int last_pulse = 0;
 volatile unsigned long last_debounce = 0;
 unsigned long last_commit = 0;
 unsigned long last_push = 0;
-eeprom_state persist;
+Preferences pref;
 
 const String sysinfo("Software version: " WASSER_VERSION ", built at: " __DATE__ " " __TIME__);
 
@@ -255,7 +263,7 @@ String time_string(void)
 }
 
 bool check_vzserver() {
-  return (persist.vzhost[0] != '\0' && persist.vzurl[0] != '\0');
+  return (!g_vzhost.isEmpty() && !g_vzurl.isEmpty());
 }
 
 void handle_index() {
@@ -279,9 +287,9 @@ void handle_index() {
   index += "http://" + IP + "/vz?url=xxxx to set volkszaehler middleware url\n";
   if (check_vzserver()) {
     index += "\ncurrent volkszaehler URL:\n";
-    index += "http://" + String(persist.vzhost) + String(persist.vzurl) + "\n";
+    index += "http://" + g_vzhost + g_vzurl + "\n";
     index += "Last push: " + String(last_push) + " (" + String(uptime - last_push) + "ms ago)\n";
-    index += "Last value: " + String(persist.pulses_sent) + "\n";
+    index += "Last value: " + String(g_pulses_sent) + "\n";
   }
   index += "</pre>\n"
     "<br>\n<a href=\"/config.html\">Configuration page</a>\n"
@@ -303,11 +311,11 @@ void handle_config() {
     "<form action=\"/vz\">"
       "<tr>"
         "<td>Volkszaehler Hostname:</td><td><input name=\"host\" value=\"";
-  resp += String(persist.vzhost);
+  resp += g_vzhost;
   resp += "\"></td>"
       "</tr>\n<tr>"
         "<td>Volkszaehler URL:</td><td><input name=\"url\" value=\"";
-  resp += String(persist.vzurl);
+  resp += g_vzurl;
   resp += "\"></td>"
         "<td><button type=\"submit\">Submit</button></td>"
       "</tr>\n"
@@ -400,21 +408,28 @@ bool checkhost(const char *host, int len) {
   return true;
 }
 
+void prefs_save() {
+  pref.begin("wasserzaehler", false);
+  pref.putInt("version", 1);
+  pref.putUInt("pulses", g_pulses);
+  pref.putUInt("pulses_sent", g_pulses_sent);
+  pref.putString("vzhost", g_vzhost);
+  pref.putString("vzurl", g_vzurl);
+  pref.end();
+}
+
 void handle_vz() {
   String message = "";
   int ret = 200;
   bool change = false;
   if (server.hasArg("host")) {
     String host = server.arg("host");
-    if (host.length() > sizeof(persist.vzhost) -1) {
-      message = "hostname too long (max " + String(sizeof(persist.vzhost)-1) + " bytes)\n";
-    } else if (!checkhost(host.c_str(), host.length())) {
+    if (!checkhost(host.c_str(), host.length())) {
       message = "invalid hostname (only a-z,A-Z,- allowed)\n";
     } else {
-      const char *chost = host.c_str();
-      if (strcmp(persist.vzhost, chost)) {
+      if (g_vzhost.compareTo(host)) {
         message = "Set hostname to " + host + "\n";
-        strcpy(persist.vzhost, chost);
+        g_vzhost = host;
         change = true;
       } else {
         message = "hostname not changed\n";
@@ -424,15 +439,12 @@ void handle_vz() {
   }
   if (server.hasArg("url")) {
     String url = server.arg("url");
-    if (url.length() > sizeof(persist.vzurl) -1) {
-      message = "URL path too long (max " + String(sizeof(persist.vzurl)-1) + " bytes)\n";
-    } else if (url.length() > 0 && url[0]!= '/') {
+    if (url.length() > 0 && url[0]!= '/') {
       message += "url path must start with '/'\n";
     } else {
-      const char *curl = url.c_str();
-      if (strcmp(persist.vzurl, curl)) {
+      if (g_vzurl.compareTo(url)) {
         message += "Set URL to " + url + "\n";
-        strcpy(persist.vzurl, curl);
+        g_vzurl = url;
         change = true;
       } else {
         message += "URL not changed\n";
@@ -440,13 +452,11 @@ void handle_vz() {
     }
     message += "\n";
   }
-  message += "VZ host: " + String(persist.vzhost) + "\n";
-  message += "VZ URL:  " + String(persist.vzurl) + "\n";
+  message += "VZ host: " + g_vzhost + "\n";
+  message += "VZ URL:  " + g_vzurl + "\n";
   server.send(ret, "text/plain", message);
-  if (change) {
-    EEPROM.put(0, persist);
-    EEPROM.commit();
-  }
+  if (change)
+    prefs_save();
 }
 
 long code_from_str(const String s) {
@@ -462,19 +472,19 @@ bool vz_push(int count) {
   String response = "";
   if (!check_vzserver())
     return false;
-  if (! client.connect(persist.vzhost, 80)) {
+  if (! client.connect(g_vzhost, 80)) {
     Serial.println("Connect to volkszaehler server failed");
     client.stop();
     return false;
   }
-  int p = persist.pulses_sent;
+  int p = g_pulses_sent;
   if (count > p) {
     p = count;
   }
-  String cmd = "GET " + String(persist.vzurl);
+  String cmd = "GET " + g_vzurl;
   cmd += "?operation=add&value=" + String(p);
   Serial.println(cmd);
-  cmd += " HTTP/1.1\r\nHost: " + String(persist.vzhost);
+  cmd += " HTTP/1.1\r\nHost: " + g_vzhost;
   cmd += "\r\n";
   cmd += "Content-Type: application/json\r\n";
   cmd += "Connection: keep-alive\r\nAccept: */*\r\n\r\n";
@@ -501,7 +511,7 @@ bool vz_push(int count) {
     Serial.println("HTTP return code: " + String(ret));
   }
   if (ret == 200) {
-    persist.pulses_sent = p;
+    g_pulses_sent = p;
     return true;
   }
   return false;
@@ -514,35 +524,49 @@ void setup() {
   for (int i=0; i < 10; i++)
     Serial.println("xxxxxxxxxxxxxxxxxxxxxxxxxxxx"); // bootloader has clobbered serial monitor
   delay(100);
-  EEPROM.begin(512);
-  EEPROM.get(0, persist);
-  if (persist.sig[0] == 0xff || memcmp(persist.sig, "WATER", 5)) {
-    Serial.println("Clearing eeprom...");
-    Serial.println(persist.sig);
-    memset(&persist, 0, sizeof(persist));
-    strcpy(persist.sig, "WATER1");
-    persist.pulses = 0;
-    persist.pulses_sent = 0;
-    EEPROM.put(0,persist);
-    EEPROM.commit();
-  } else {
-    Serial.print("Read pulses from eeprom: ");
-    Serial.println(persist.pulses);
-    pulses = persist.pulses;
-    if (persist.sig[5] < '1') { // update
-      Serial.println("updating config from " +String(persist.sig)+ " to WATER1\n");
-      strcpy(persist.sig, "WATER1");
-      persist.pulses_sent = pulses;
-      memset(persist.vzhost, 0, sizeof(persist.vzhost));
-      memset(persist.vzurl, 0, sizeof(persist.vzurl));
-      EEPROM.put(0,persist);
-      EEPROM.commit();
+  pref.begin("wasserzaehler", false);
+  int version = pref.getInt("version", -1);
+  if (version == -1) {
+    /* check if old config in EEPROM class exists */
+    pref.end();
+    Serial.println("Checking for old config...");
+    eeprom_state persist;
+    EEPROM.begin(512);
+    EEPROM.get(0, persist);
+    EEPROM.end();
+    if (persist.sig[0] == 0xff || memcmp(persist.sig, "WATER1", 6)) {
+      Serial.println("No old config...");
+      g_pulses = 0;
+      g_pulses_sent = 0;
+      g_vzhost = String();
+      g_vzurl = String();
+    } else {
+      Serial.print("Read pulses from eeprom: ");
+      Serial.println(persist.pulses);
+      g_pulses = persist.pulses;
+      g_pulses_sent = persist.pulses_sent;
+      g_vzhost = String(persist.vzhost);
+      g_vzurl = String(persist.vzurl);
     }
-    Serial.print("VZhost: ");
-    Serial.println(persist.vzhost);
-    Serial.print("VZurl:  ");
-    Serial.println(persist.vzurl);
+    prefs_save();
+  } else {
+    Serial.println("reading Preferences...");
+    g_pulses = pref.getUInt("pulses", 0);
+    g_pulses_sent= pref.getUInt("pulses_sent", 0);
+    g_vzhost = pref.getString("vzhost");
+    g_vzurl = pref.getString("vzurl");
+    pref.end();
   }
+  pulses = g_pulses;
+  Serial.print("VZhost: ");
+  Serial.println(g_vzhost);
+  Serial.print("VZurl:  ");
+  Serial.println(g_vzurl);
+  Serial.print("Pulses: ");
+  Serial.println(g_pulses);
+  Serial.print("Sent:   ");
+  Serial.println(g_pulses_sent);
+
   last_commit = millis();
   Serial.println();
   pinMode(LED_BUILTIN, OUTPUT);
@@ -590,20 +614,19 @@ void loop() {
   bool update_push = false;
   if (check_vzserver() && millis() - last_push > 60000)
     update_push = true;
-  if (persist.pulses != pulses || update_push) {
-    Serial.printf("Pulse update: %d\n", pulses);
+  if (g_pulses != pulses || update_push) {
+    Serial.printf("Pulse update: %d\r\n", pulses);
     if (vz_push(pulses))
       last_push = millis();
   }
-  persist.pulses = pulses;
+  g_pulses = pulses;
   if (millis() - last_commit > 60000) {
-    Serial.printf("COMMIT! %lu last_p: %d, pulse: %d\n", millis() - last_commit, last_pulse, persist.pulses);
-    if (persist.pulses != last_pulse) {
-      EEPROM.put(0,persist);
-      EEPROM.commit();
+    Serial.printf("COMMIT! %lu last_p: %d, pulse: %d\r\n", millis() - last_commit, last_pulse, g_pulses);
+    if (g_pulses != last_pulse) {
+      prefs_save();
     }
     last_commit = millis();
-    last_pulse = persist.pulses;
+    last_pulse = g_pulses;
   }
   server.handleClient();
   delay(100);                       // wait for 0.1 seconds
