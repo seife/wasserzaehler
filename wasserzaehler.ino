@@ -546,7 +546,7 @@ void setup() {
   last_commit = millis();
   Serial.println();
   pinMode(LED_BUILTIN, OUTPUT);
-  pinMode(buttonPin, INPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
   pinMode(inputPin, INPUT_PULLUP);
   digitalWrite(LED_BUILTIN, LED_ON);
 
