@@ -71,6 +71,7 @@ int state = STATE_DISC;
 
 #include <EEPROM.h>
 #include <Preferences.h>
+#include <Ticker.h>
 
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
@@ -214,7 +215,6 @@ volatile int hilo;
 volatile bool last_state;
 int last_pulse = 0;
 volatile unsigned long last_debounce = 0;
-unsigned long last_commit = 0;
 unsigned long last_push = 0;
 Preferences pref;
 
@@ -517,6 +517,14 @@ bool vz_push(int count) {
   return false;
 }
 
+void commit_config() {
+  Serial.printf("COMMIT! %lu last_p: %d, pulse: %d\r\n", millis(), last_pulse, g_pulses);
+  if (g_pulses != last_pulse)
+    prefs_save();
+  last_pulse = g_pulses;
+}
+
+Ticker commit_timer;
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -567,7 +575,6 @@ void setup() {
   Serial.print("Sent:   ");
   Serial.println(g_pulses_sent);
 
-  last_commit = millis();
   Serial.println();
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(buttonPin, INPUT_PULLUP);
@@ -591,6 +598,7 @@ void setup() {
   httpUpdater.setup(&server);
   server.begin();
   attachInterrupt(digitalPinToInterrupt(inputPin), isr, CHANGE);
+  commit_timer.attach(60, commit_config);
 }
 
 int i = 0;
@@ -620,14 +628,6 @@ void loop() {
       last_push = millis();
   }
   g_pulses = pulses;
-  if (millis() - last_commit > 60000) {
-    Serial.printf("COMMIT! %lu last_p: %d, pulse: %d\r\n", millis() - last_commit, last_pulse, g_pulses);
-    if (g_pulses != last_pulse) {
-      prefs_save();
-    }
-    last_commit = millis();
-    last_pulse = g_pulses;
-  }
   server.handleClient();
   delay(100);                       // wait for 0.1 seconds
 }
