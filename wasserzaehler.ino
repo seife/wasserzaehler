@@ -215,6 +215,7 @@ volatile int hilo;
 volatile bool last_state;
 int last_pulse = 0;
 volatile unsigned long last_debounce = 0;
+bool update_push = false;
 unsigned long last_push = 0;
 Preferences pref;
 
@@ -524,7 +525,13 @@ void commit_config() {
   last_pulse = g_pulses;
 }
 
+void trigger_push() {
+  // Serial.println(String(__func__)+ " " + String(millis()));
+  update_push = true;
+}
+
 Ticker commit_timer;
+Ticker push_timer;
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -599,6 +606,7 @@ void setup() {
   server.begin();
   attachInterrupt(digitalPinToInterrupt(inputPin), isr, CHANGE);
   commit_timer.attach(60, commit_config);
+  push_timer.attach(60, trigger_push);
 }
 
 int i = 0;
@@ -619,13 +627,13 @@ void loop() {
     start_WPS();
   }
   
-  bool update_push = false;
-  if (check_vzserver() && millis() - last_push > 60000)
-    update_push = true;
   if (g_pulses != pulses || update_push) {
-    Serial.printf("Pulse update: %d\r\n", pulses);
-    if (vz_push(pulses))
+    Serial.printf("Pulse update: %d - %d\r\n", pulses, millis());
+    update_push = false;
+    if (vz_push(pulses)) {
+      push_timer.attach(60, trigger_push); /* re-arm */
       last_push = millis();
+    }
   }
   g_pulses = pulses;
   server.handleClient();
