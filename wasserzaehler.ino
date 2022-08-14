@@ -419,13 +419,32 @@ bool checkhost(const char *host, int len) {
   return true;
 }
 
+#define PREF_ISSUE1 1
+#if PREF_ISSUE1
+  /* workaround for
+   * https://github.com/vshymanskyy/Preferences/issues/1
+   * until https://github.com/vshymanskyy/Preferences/pull/2
+   * is merged or the issue is fixed otherwise */
+void pref_putString(const char *key, String value) {
+  if (value.isEmpty())
+    pref.putChar(key, 0);
+  else
+    pref.putString(key, value);
+}
+#endif
+
 void prefs_save() {
   pref.begin("wasserzaehler", false);
   pref.putInt("version", 1);
   pref.putUInt("pulses", g_pulses);
   pref.putUInt("pulses_sent", g_pulses_sent);
+#if PREF_ISSUE1
+  pref_putString("vzhost", g_vzhost);
+  pref_putString("vzurl", g_vzurl);
+#else
   pref.putString("vzhost", g_vzhost);
   pref.putString("vzurl", g_vzurl);
+#endif
   pref.end();
 }
 
