@@ -341,11 +341,20 @@ void handle_uptime() {
   server.send(200, "text/plain", String(millis()) + "\n");
 }
 
+/* helper to reduce duplicate code */
+bool getArg(const char *name, String &arg) {
+  if (!server.hasArg(name))
+    return false;
+  arg = server.arg(name);
+  return true;
+}
+
 void handle_pulses() {
   String message;
   int ret = 200;
-  if (server.hasArg("set")) {
-    long p = server.arg("set") . toInt();
+  String arg;
+  if (getArg("set", arg)) {
+    long p = arg . toInt();
     if (p != 0) {
       if (p != pulses) {
         message = "pulses value set to " + String(p);
@@ -355,7 +364,7 @@ void handle_pulses() {
       }
     } else {
       ret = 500;
-      message = "invalid pulse value '" + server.arg("set") + "'";
+      message = "invalid pulse value '" + arg + "'";
     }
   } else {
     message = String(pulses);
@@ -372,8 +381,9 @@ void handle_pulses_html() {
     "<H1>Pulses set</H1>"
     "<pre>";
   int ret = 200;
-  if (server.hasArg("set")) {
-    long p = server.arg("set") . toInt();
+  String arg;
+  if (getArg("set", arg)) {
+    long p = arg.toInt();
     if (p != 0) {
       if (p != pulses) {
         message += "pulses value set to " + String(p);
@@ -383,7 +393,7 @@ void handle_pulses_html() {
       }
     } else {
       ret = 500;
-      message += "invalid pulse value '" + server.arg("set") + "'";
+      message += "invalid pulse value '" + arg + "'";
     }
   } else {
     message += String(pulses);
@@ -423,14 +433,14 @@ void handle_vz() {
   String message = "";
   int ret = 200;
   bool change = false;
-  if (server.hasArg("host")) {
-    String host = server.arg("host");
-    if (!checkhost(host.c_str(), host.length())) {
+  String arg;
+  if (getArg("host", arg)) {
+    if (!checkhost(arg.c_str(), arg.length())) {
       message = "invalid hostname (only a-z,A-Z,- allowed)\n";
     } else {
-      if (g_vzhost.compareTo(host)) {
-        message = "Set hostname to " + host + "\n";
-        g_vzhost = host;
+      if (g_vzhost.compareTo(arg)) {
+        message = "Set hostname to " + arg + "\n";
+        g_vzhost = arg;
         change = true;
       } else {
         message = "hostname not changed\n";
@@ -438,14 +448,13 @@ void handle_vz() {
     }
     message += "\n";
   }
-  if (server.hasArg("url")) {
-    String url = server.arg("url");
-    if (url.length() > 0 && url[0]!= '/') {
+  if (getArg("url", arg)) {
+    if (arg.length() > 0 && arg[0]!= '/') {
       message += "url path must start with '/'\n";
     } else {
-      if (g_vzurl.compareTo(url)) {
-        message += "Set URL to " + url + "\n";
-        g_vzurl = url;
+      if (g_vzurl.compareTo(arg)) {
+        message += "Set URL to '" + arg + "'\n";
+        g_vzurl = arg;
         change = true;
       } else {
         message += "URL not changed\n";
