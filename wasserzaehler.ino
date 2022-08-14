@@ -36,6 +36,8 @@
 int buttonPin = 0; /* button on GPIO0 */
 int inputPin = 5;  /* GPIO5 has a pullup resistor */
 
+int tempPin = 14;  /* GPIO14 for DS18B20 */
+
 /* mostly for LED blinking modes */
 enum {
   STATE_DISC = 0,
@@ -67,11 +69,28 @@ uint32_t g_pulses_sent;
 String g_vzhost;
 String g_vzurl;
 
+/* temperature measurement stuff */
+String g_mqtthost;
+uint16_t g_mqttport = 1883; /* default */
+String g_mqtttopic;
+String g_mqttid = "no sensor";
+bool mqtt_changed = false;    /* config change */
+bool mqtt_server_set = false; /* complete config available */
+float g_temp = -127.0;
+
 int state = STATE_DISC;
 
 #include <EEPROM.h>
 #include <Preferences.h>
 #include <Ticker.h>
+
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <PubSubClient.h>
+
+DeviceAddress DS18B20_Address;
+OneWire oneWire(tempPin);
+DallasTemperature sensor(&oneWire);
 
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
@@ -162,6 +181,8 @@ WebServer server(80);
 HTTPUpdateServer httpUpdater;
 #endif
 WiFiClient client;
+WiFiClient mqtt_conn;
+PubSubClient mqtt_client(mqtt_conn);
 
 void start_WPS() {
   Serial.println("Starting WPS");
@@ -217,6 +238,7 @@ int last_pulse = 0;
 volatile unsigned long last_debounce = 0;
 bool update_push = false;
 unsigned long last_push = 0;
+unsigned long last_temp = 0;
 Preferences pref;
 
 const String sysinfo("Software version: " WASSER_VERSION ", built at: " __DATE__ " " __TIME__);
@@ -267,6 +289,10 @@ bool check_vzserver() {
   return (!g_vzhost.isEmpty() && !g_vzurl.isEmpty());
 }
 
+bool check_mqserver() {
+  return (!g_mqtthost.isEmpty() && !g_mqtttopic.isEmpty() && g_mqttport);
+}
+
 void handle_index() {
   // TODO: use server.hostHeader()?
   unsigned long uptime = millis();
@@ -282,6 +308,8 @@ void handle_index() {
     "<pre>";
   index += "Pulse:  " + String(pulses) + "\n";
   index += "Uptime: " + time_string() + "\n";
+  index += "MQTTid: " + g_mqttid + "\n";
+  index += "Temp:   " + String(g_temp,4) + "°C (last_published " +String(uptime - last_temp)+ "ms ago)\n";
   index += "http://" + IP + "/pulses for plain pulse count\n";
   index += "http://" + IP + "/pulses?set=xxxx to set pulse count\n";
   index += "http://" + IP + "/vz?host=xxxx to set volkszaehler middleware host\n";
@@ -291,6 +319,11 @@ void handle_index() {
     index += "http://" + g_vzhost + g_vzurl + "\n";
     index += "Last push: " + String(last_push) + " (" + String(uptime - last_push) + "ms ago)\n";
     index += "Last value: " + String(g_pulses_sent) + "\n";
+  }
+  if (check_mqserver()) {
+    index += "\nMQTT server name:" + g_mqtthost +
+             "\nMQTT server port:" + String(g_mqttport) +
+             "\nMQTT topic:      " + g_mqtttopic + "\n";
   }
   index += "</pre>\n"
     "<br>\n<a href=\"/config.html\">Configuration page</a>\n"
@@ -329,6 +362,23 @@ void handle_config() {
   resp += "\"></td>"
         "<td><button type=\"submit\">Submit</button></td>"
       "</tr>"
+    "</form>\n"
+    "<tr><td><h1>Temperature Sensor Configuration</h2></td></tr>\n"
+    "<form action=\"/vz\">"
+      "<tr>"
+        "<td>MQTT Server Hostname:</td><td><input name=\"mqhost\" value=\"";
+  resp += g_mqtthost;
+  resp += "\"></td>"
+      "</tr>\n<tr>"
+        "<td>MQTT Server Port:</td><td><input name=\"mqport\" value=\"";
+  resp += g_mqttport;
+  resp += "\"></td>"
+      "</tr>\n<tr>"
+        "<td>MQTT Topic:</td><td><input name=\"mqtopic\" value=\"";
+  resp += g_mqtttopic;
+  resp += "\"></td>"
+        "<td><button type=\"submit\">Submit</button></td>"
+      "</tr>\n"
     "</form>\n"
     "</table>\n"
     "<p><a href=\"/update\">Software Update</a>\n"
@@ -441,10 +491,15 @@ void prefs_save() {
 #if PREF_ISSUE1
   pref_putString("vzhost", g_vzhost);
   pref_putString("vzurl", g_vzurl);
+  pref_putString("mqtthost", g_mqtthost);
+  pref_putString("mqtttopic", g_mqtttopic);
 #else
   pref.putString("vzhost", g_vzhost);
   pref.putString("vzurl", g_vzurl);
+  pref.putString("mqtthost", g_mqtthost);
+  pref.putString("mqtttopic", g_mqtttopic);
 #endif
+  pref.putUShort("mqttport", g_mqttport);
   pref.end();
 }
 
@@ -461,11 +516,9 @@ void handle_vz() {
         message = "Set hostname to " + arg + "\n";
         g_vzhost = arg;
         change = true;
-      } else {
+      } else
         message = "hostname not changed\n";
-      }
     }
-    message += "\n";
   }
   if (getArg("url", arg)) {
     if (arg.length() > 0 && arg[0]!= '/') {
@@ -475,14 +528,55 @@ void handle_vz() {
         message += "Set URL to '" + arg + "'\n";
         g_vzurl = arg;
         change = true;
-      } else {
+      } else
         message += "URL not changed\n";
-      }
     }
-    message += "\n";
   }
-  message += "VZ host: " + g_vzhost + "\n";
-  message += "VZ URL:  " + g_vzurl + "\n";
+  if (getArg("mqhost", arg)) {
+    if (!checkhost(arg.c_str(), arg.length())) {
+      message = "invalid MQTT hostname (only a-z,A-Z,- allowed)\n";
+    } else {
+      if (g_mqtthost.compareTo(arg)) {
+        message += "Set MQTT hostname to " + arg + "\n";
+        g_mqtthost = arg;
+        change = true;
+        mqtt_changed = true;
+      } else
+        message += "MQTT hostname not changed\n";
+    }
+  }
+  if (getArg("mqport", arg)) {
+    long p = arg.toInt();
+    if (p != 0) {
+      if (p != g_mqttport) {
+        message += "MQTT port set to " + String(p) + "\n";
+        g_mqttport = p;
+        change = true;
+        mqtt_changed = true;
+      } else {
+        message += "MQTT port not changed\n";
+      }
+    } else {
+      ret = 500;
+      message += "invalid MQTT port value '" + arg + "'\n";
+    }
+  }
+  if (getArg("mqtopic", arg)) {
+    if (g_mqtttopic.compareTo(arg)) {
+      message += "Set MQTT Topic to " + arg + "\n";
+      g_mqtttopic = arg;
+      change = true;
+      mqtt_changed = true;
+    } else
+      message += "MQTT Topic not changed\n";
+  }
+  if (! message.isEmpty())
+    message += "\n";
+  message += "VZ host:    " + g_vzhost + "\n";
+  message += "VZ URL:     " + g_vzurl + "\n";
+  message += "MQTT host:  " + g_mqtthost + "\n";
+  message += "MQTT port:  " + String(g_mqttport) + "\n";
+  message += "MQTT topic: " + g_mqtttopic + "\n";
   server.send(ret, "text/plain", message);
   if (change)
     prefs_save();
@@ -546,6 +640,12 @@ bool vz_push(int count) {
   return false;
 }
 
+bool temp_request = false;
+void update_temp() {
+  sensor.requestTemperatures();
+  temp_request = true;
+}
+
 void commit_config() {
   Serial.printf("COMMIT! %lu last_p: %d, pulse: %d\r\n", millis(), last_pulse, g_pulses);
   if (g_pulses != last_pulse)
@@ -558,6 +658,7 @@ void trigger_push() {
   update_push = true;
 }
 
+Ticker temp_timer;
 Ticker commit_timer;
 Ticker push_timer;
 void setup() {
@@ -567,6 +668,29 @@ void setup() {
   for (int i=0; i < 10; i++)
     Serial.println("xxxxxxxxxxxxxxxxxxxxxxxxxxxx"); // bootloader has clobbered serial monitor
   delay(100);
+  /* works good enough for me without external pullup */
+  pinMode(tempPin, INPUT_PULLUP);
+  sensor.begin();
+  if (sensor.getAddress(DS18B20_Address, 0)) {
+    char tmp[10];
+    sensor.setResolution(DS18B20_Address, 12); /* 12 bits, 0.0625°C, 750ms/conversion */
+    g_mqttid = "DS18B20-";
+    Serial.print("Sensor addr: ");
+    for (byte j = 0; j < 8; j++) {
+      sprintf(tmp, "%02X", DS18B20_Address[j]);
+      g_mqttid += tmp;
+      Serial.print(tmp);
+      if (j < 7)
+        Serial.print(":");
+    }
+    Serial.println();
+    sensor.setWaitForConversion(false);
+    sensor.requestTemperatures();
+    temp_timer.attach(20, update_temp);
+  } else {
+    Serial.println("Sensor Address failed?");
+  }
+
   pref.begin("wasserzaehler", false);
   int version = pref.getInt("version", -1);
   if (version == -1) {
@@ -598,6 +722,10 @@ void setup() {
     g_pulses_sent= pref.getUInt("pulses_sent", 0);
     g_vzhost = pref.getString("vzhost");
     g_vzurl = pref.getString("vzurl");
+    g_mqttport = pref.getUShort("mqttport", g_mqttport);
+    g_mqtthost = pref.getString("mqtthost");
+    g_mqtttopic = pref.getString("mqtttopic");
+    mqtt_changed = check_mqserver();
     pref.end();
   }
   pulses = g_pulses;
@@ -609,6 +737,14 @@ void setup() {
   Serial.println(g_pulses);
   Serial.print("Sent:   ");
   Serial.println(g_pulses_sent);
+  Serial.print("MQTTID: ");
+  Serial.println(g_mqttid);
+  Serial.print("MQhost: ");
+  Serial.println(g_mqtthost);
+  Serial.print("MQport: ");
+  Serial.println(g_mqttport);
+  Serial.print("MQtopic:");
+  Serial.println(g_mqtttopic);
 
   Serial.println();
   pinMode(LED_BUILTIN, OUTPUT);
@@ -637,6 +773,7 @@ void setup() {
   push_timer.attach(60, trigger_push);
 }
 
+unsigned long last_mqtt_reconnect = 0;
 int i = 0;
 void loop() {
   WiFiStatusCheck();
@@ -664,6 +801,47 @@ void loop() {
     }
   }
   g_pulses = pulses;
+  /* mqtt stuff */
+  if (mqtt_changed) {
+    Serial.println("MQTT config changed. Dis- and reconnecting...");
+    mqtt_changed = false;
+    mqtt_client.disconnect();
+    if (check_mqserver())
+      mqtt_client.setServer(g_mqtthost.c_str(), g_mqttport);
+    else
+      Serial.println("MQTT server name not configured");
+    mqtt_client.setKeepAlive(60); /* same as python's paho.mqtt.client */
+    Serial.print("MQTT SERVER: "); Serial.println(g_mqtthost);
+    Serial.print("MQTT PORT:   "); Serial.println(g_mqttport);
+    last_mqtt_reconnect = 0; /* trigger connect() */
+  }
+  unsigned long now = millis();
+  if (!mqtt_client.connected() && now - last_mqtt_reconnect > 5 * 1000) {
+    if (check_mqserver()) {
+      Serial.print("MQTT RECONNECT...");
+      if (mqtt_client.connect(g_mqttid.c_str()))
+        Serial.println("OK!");
+      else
+        Serial.println("FAILED");
+    }
+    last_mqtt_reconnect = now;
+  }
+  // mqtt_ok = mqtt_client.connected();
+  /* temp_request is set by temp_timer/update_temp() */
+  if (temp_request) {
+    if (sensor.isConversionComplete()) {
+      int16_t _T = sensor.getTemp(DS18B20_Address);
+      g_temp = _T / 128.0f;
+      Serial.printf("%d T: %.4f °C ", millis(), g_temp);
+      Serial.println(String(g_temp, 1));
+      temp_request = false;
+      if (_T != DEVICE_DISCONNECTED_RAW && check_mqserver()) {
+        last_temp = millis();
+        mqtt_client.publish((g_mqtttopic).c_str(), String(g_temp, 1).c_str());
+      }
+    }
+  }
+
   server.handleClient();
   delay(100);                       // wait for 0.1 seconds
 }
