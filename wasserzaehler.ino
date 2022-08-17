@@ -769,7 +769,9 @@ void setup() {
   httpUpdater.setup(&server);
   server.begin();
   attachInterrupt(digitalPinToInterrupt(inputPin), isr, CHANGE);
-  commit_timer.attach(60, commit_config);
+  /* attach_scheduled to avoid running in SYS CTX which might cause
+   * LITTLEFS to trigger watchdog timeout resets */
+  commit_timer.attach_scheduled(60, commit_config);
   push_timer.attach(60, trigger_push);
 }
 
