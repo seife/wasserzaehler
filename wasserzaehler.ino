@@ -796,11 +796,12 @@ void loop() {
   
   if (g_pulses != pulses || update_push) {
     Serial.printf("Pulse update: %d - %d\r\n", pulses, millis());
-    update_push = false;
     if (vz_push(pulses)) {
-      push_timer.attach(60, trigger_push); /* re-arm */
+      if (!update_push)
+        push_timer.attach(60, trigger_push); /* re-arm */
       last_push = millis();
     }
+    update_push = false;
   }
   g_pulses = pulses;
   /* mqtt stuff */
