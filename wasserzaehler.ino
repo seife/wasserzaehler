@@ -92,6 +92,12 @@ DeviceAddress DS18B20_Address;
 OneWire oneWire(tempPin);
 DallasTemperature sensor(&oneWire);
 
+/* helper */
+void log_time() {
+  /* maybe extend later */
+  Serial.printf("%lu ", millis());
+}
+
 #ifdef ESP8266
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
@@ -606,6 +612,7 @@ bool vz_push(int count) {
   }
   String cmd = "GET " + g_vzurl;
   cmd += "?operation=add&value=" + String(p);
+  log_time();
   Serial.println(cmd);
   cmd += " HTTP/1.1\r\nHost: " + g_vzhost;
   cmd += "\r\n";
@@ -628,11 +635,13 @@ bool vz_push(int count) {
     // Serial.printf("%c", c);
   }
   client.stop();
-  Serial.println("Return line: " + response);
+  log_time();
+  Serial.print("Return line: " + response);
   long ret = code_from_str(response);
-  if (ret > 0) {
-    Serial.println("HTTP return code: " + String(ret));
-  }
+  if (ret > 0)
+    Serial.println(" => code: " + String(ret));
+  else
+    Serial.println(" => invalid return code?");
   if (ret == 200) {
     g_pulses_sent = p;
     return true;
@@ -647,7 +656,8 @@ void update_temp() {
 }
 
 void commit_config() {
-  Serial.printf("COMMIT! %lu last_p: %d, pulse: %d\r\n", millis(), last_pulse, g_pulses);
+  log_time();
+  Serial.printf("COMMIT! last_p: %d, pulse: %d\r\n", last_pulse, g_pulses);
   if (g_pulses != last_pulse)
     prefs_save();
   last_pulse = g_pulses;
@@ -795,7 +805,8 @@ void loop() {
   }
   
   if (g_pulses != pulses || update_push) {
-    Serial.printf("Pulse update: %d - %d\r\n", pulses, millis());
+    log_time();
+    Serial.printf("Pulse update: %d\r\n", pulses);
     if (vz_push(pulses)) {
       if (!update_push)
         push_timer.attach(60, trigger_push); /* re-arm */
@@ -835,7 +846,8 @@ void loop() {
     if (sensor.isConversionComplete()) {
       int16_t _T = sensor.getTemp(DS18B20_Address);
       g_temp = _T / 128.0f;
-      Serial.printf("%d T: %.4f °C ", millis(), g_temp);
+      log_time();
+      Serial.printf("T: %.4f °C ", g_temp);
       Serial.println(String(g_temp, 1));
       temp_request = false;
       if (_T != DEVICE_DISCONNECTED_RAW && check_mqserver()) {
