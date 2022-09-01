@@ -34,7 +34,10 @@
 #endif
 
 int buttonPin = 0; /* button on GPIO0 */
-int inputPin = 5;  /* GPIO5 has a pullup resistor */
+int inputPin[2] = { 5, 4 };  /* water, gas */
+#define WATER 0
+#define GAS 1
+String label[2] = { "Water", "Gas" };
 
 int tempPin = 14;  /* GPIO14 for DS18B20 */
 
@@ -64,10 +67,14 @@ struct eeprom_state {
 };
 
 /* new */
-uint32_t g_pulses;
-uint32_t g_pulses_sent;
+uint32_t g_pulses[2] = { 0, 0 };
+uint32_t g_pulses_sent[2] = { 0, 0 };
 String g_vzhost;
-String g_vzurl;
+String g_vzurl[2] = { "", "" };
+
+const char* _pulses[2] = { "pulses0", "pulses1" };
+const char* _pulses_sent[2] = { "pulses_sent0", "pulses_sent1" };
+const char* _vzurl[2] = { "vzurl0", "vzurl1" };
 
 /* temperature measurement stuff */
 String g_mqtthost;
@@ -237,13 +244,13 @@ void WiFiStatusCheck() {
   last = now;
 }
 
-volatile int pulses = 0;
-volatile int hilo;
+volatile uint32_t pulses[] = { 0, 0};
+volatile int hilo[2];
 volatile bool last_state;
-int last_pulse = 0;
-volatile unsigned long last_debounce = 0;
-bool update_push = false;
-unsigned long last_push = 0;
+int last_pulse[] = { 0, 0 };
+volatile unsigned long last_debounce[] = { 0, 0 };
+bool update_push[] = { false, false };
+unsigned long last_push[] = { 0, 0 };
 unsigned long last_temp = 0;
 Preferences pref;
 
@@ -251,22 +258,30 @@ const String sysinfo("Software version: " WASSER_VERSION ", built at: " __DATE__
 
 unsigned int debounce_delay = 100; // milliseconds
 
-void ICACHE_RAM_ATTR isr(void) {
-  int in = digitalRead(inputPin);
-  if (hilo == in)
+void ICACHE_RAM_ATTR isr(int i) {
+  int in = digitalRead(inputPin[i]);
+  if (hilo[i] == in)
     return;
   boolean debounce = false;
-  if (millis() - last_debounce < debounce_delay)
+  if (millis() - last_debounce[i] < debounce_delay)
     debounce = true;
 
-  last_debounce = millis();
+  last_debounce[i] = millis();
 
   if (debounce)
     return;
 
-  hilo = in;
-  if (hilo)
-    pulses++;
+  hilo[i] = in;
+  if (hilo[i])
+    pulses[i]++;
+}
+
+void ICACHE_RAM_ATTR isr0(void) {
+  isr(0);
+}
+
+void ICACHE_RAM_ATTR isr1(void) {
+  isr(1);
 }
 
 uint32_t uptime_sec()
@@ -291,8 +306,8 @@ String time_string(void)
   return ret;
 }
 
-bool check_vzserver() {
-  return (!g_vzhost.isEmpty() && !g_vzurl.isEmpty());
+bool check_vzserver(int i) {
+  return (!g_vzhost.isEmpty() && !g_vzurl[i].isEmpty());
 }
 
 bool check_mqserver() {
@@ -301,6 +316,7 @@ bool check_mqserver() {
 
 void handle_index() {
   // TODO: use server.hostHeader()?
+  int i;
   unsigned long uptime = millis();
   String IP = WiFi.localIP().toString();
   String index =
@@ -312,19 +328,20 @@ void handle_index() {
     "</head>\n<body>\n"
     "<H1>Wasserzaehler</H1>\n"
     "<pre>";
-  index += "Pulse:  " + String(pulses) + "\n";
+  for (i = 0; i < 2; i++)
+    index += "Pulse:  " + String(pulses[i]) + " (" + label[i] +")\n";
   index += "Uptime: " + time_string() + "\n";
   index += "MQTTid: " + g_mqttid + "\n";
   index += "Temp:   " + String(g_temp,4) + "°C (last_published " +String(uptime - last_temp)+ "ms ago)\n";
   index += "http://" + IP + "/pulses for plain pulse count\n";
-  index += "http://" + IP + "/pulses?set=xxxx to set pulse count\n";
-  index += "http://" + IP + "/vz?host=xxxx to set volkszaehler middleware host\n";
-  index += "http://" + IP + "/vz?url=xxxx to set volkszaehler middleware url\n";
-  if (check_vzserver()) {
-    index += "\ncurrent volkszaehler URL:\n";
-    index += "http://" + g_vzhost + g_vzurl + "\n";
-    index += "Last push: " + String(last_push) + " (" + String(uptime - last_push) + "ms ago)\n";
-    index += "Last value: " + String(g_pulses_sent) + "\n";
+  index += "\n";
+  for (i = 0; i < 2; i++) {
+    if (check_vzserver(i)) {
+      index += "current volkszaehler URL (" + label[i] +")\n";
+      index += "http://" + g_vzhost + g_vzurl[i] + "\n";
+      index += "Last push: " + String(last_push[i]) + " (" + String(uptime - last_push[i]) + "ms ago)\n";
+      index += "Last value: " + String(g_pulses_sent[i]) + " (" + label[i]+ ")\n";
+    }
   }
   if (check_mqserver()) {
     index += "\nMQTT server name:" + g_mqtthost +
@@ -353,22 +370,30 @@ void handle_config() {
         "<td>Volkszaehler Hostname:</td><td><input name=\"host\" value=\"";
   resp += g_vzhost;
   resp += "\"></td>"
-      "</tr>\n<tr>"
-        "<td>Volkszaehler URL:</td><td><input name=\"url\" value=\"";
-  resp += g_vzurl;
-  resp += "\"></td>"
-        "<td><button type=\"submit\">Submit</button></td>"
-      "</tr>\n"
+      "</tr>\n<tr>";
+  for (int i = 0; i < 2; i++) {
+     resp += "<td>Volkszaehler URL " + label[i] + ":</td><td><input name=\"url" + String(i) +"\" value=\"";
+    resp += g_vzurl[i];
+    resp += "\"></td>";
+    if (i > 0)
+      resp += "<td><button type=\"submit\">Submit</button></td>";
+    resp += "</tr>\n";
+  }
+  resp +=
     "</form>\n"
-    "<tr><td><h2>Pulse correction</h2></td></tr>\n"
-    "<form action=\"/pulses.html\">"
-      "<tr>"
-        "<td>Pulses:</td><td><input name=\"set\" value=\"";
-  resp += String(pulses);
-  resp += "\"></td>"
-        "<td><button type=\"submit\">Submit</button></td>"
-      "</tr>"
-    "</form>\n"
+    "<tr><td><h2>Pulse correction</h2></td></tr>\n";
+  for (int i = 0; i < 2; i++) {
+    resp +=
+      "<form action=\"/pulses.html\">"
+        "<tr>"
+          "<td>Pulses " + label[i] + ":</td><td><input name=\"set" + String(i)+ "\" value=\"";
+    resp += String(pulses[i]);
+    resp += "\"></td>"
+          "<td><button type=\"submit\">Submit</button></td>"
+        "</tr>"
+      "</form>\n";
+  }
+  resp +=
     "<tr><td><h1>Temperature Sensor Configuration</h2></td></tr>\n"
     "<form action=\"/vz\">"
       "<tr>"
@@ -409,21 +434,28 @@ void handle_pulses() {
   String message;
   int ret = 200;
   String arg;
-  if (getArg("set", arg)) {
+  const char *args[2] = { "set0", "set1" };
+  bool noargs = true;
+  for (int i = 0; i < 2; i++) {
+    if (!getArg(args[i], arg))
+      continue;
+    noargs = false;
     long p = arg . toInt();
     if (p != 0) {
-      if (p != pulses) {
-        message = "pulses value set to " + String(p);
-        pulses = p;
+      if (p != pulses[i]) {
+        message += label[i] + " pulses value set to " + String(p);
+        pulses[i] = p;
       } else {
         message = "pulse value unchanged " + String(p);
       }
     } else {
       ret = 500;
-      message = "invalid pulse value '" + arg + "'";
+      message += "invalid pulse value '" + arg + "'";
     }
-  } else {
-    message = String(pulses);
+  }
+  if (noargs) {
+    for (int i = 0; i < 2; i++)
+      message += label[i] + ": " + String(pulses[i]) + "\n";
   }
   server.send(ret, "text/plain", message + "\n");
 }
@@ -438,21 +470,28 @@ void handle_pulses_html() {
     "<pre>";
   int ret = 200;
   String arg;
-  if (getArg("set", arg)) {
+  const char *args[2] = { "set0", "set1" };
+  bool noargs = true;
+  for (int i = 0; i < 2; i++) {
+    if (!getArg(args[i], arg))
+      continue;
+    noargs = false;
     long p = arg.toInt();
     if (p != 0) {
-      if (p != pulses) {
-        message += "pulses value set to " + String(p);
-        pulses = p;
+      if (p != pulses[i]) {
+        message += label[i] + " pulses value set to " + String(p);
+        pulses[i] = p;
       } else {
-        message += "pulse value unchanged " + String(p);
+        message += label[i] + " pulse value unchanged " + String(p);
       }
     } else {
       ret = 500;
       message += "invalid pulse value '" + arg + "'";
     }
-  } else {
-    message += String(pulses);
+  }
+  if (noargs) {
+    for (int i = 0; i < 2; i++)
+      message += label[i] + ": " + String(pulses[i]) + "\n";
   }
   message += "</pre>"
     "<br><a href=\"/index.html\">Main page</a>"
@@ -491,17 +530,21 @@ void pref_putString(const char *key, String value) {
 
 void prefs_save() {
   pref.begin("wasserzaehler", false);
-  pref.putInt("version", 1);
-  pref.putUInt("pulses", g_pulses);
-  pref.putUInt("pulses_sent", g_pulses_sent);
+  pref.putInt("version", 2);
+  for (int i = 0; i < 2; i++) {
+    pref.putUInt(_pulses[i], g_pulses[i]);
+    pref.putUInt(_pulses_sent[i], g_pulses_sent[i]);
+  }
 #if PREF_ISSUE1
   pref_putString("vzhost", g_vzhost);
-  pref_putString("vzurl", g_vzurl);
+  for (int i = 0; i < 2; i++)
+    pref_putString(_vzurl[i], g_vzurl[i]);
   pref_putString("mqtthost", g_mqtthost);
   pref_putString("mqtttopic", g_mqtttopic);
 #else
   pref.putString("vzhost", g_vzhost);
-  pref.putString("vzurl", g_vzurl);
+  for (int i = 0; i < 2; i++)
+    pref.putString(_vzurl[i], g_vzurl[i]);
   pref.putString("mqtthost", g_mqtthost);
   pref.putString("mqtttopic", g_mqtttopic);
 #endif
@@ -526,16 +569,21 @@ void handle_vz() {
         message = "hostname not changed\n";
     }
   }
-  if (getArg("url", arg)) {
+  int i = 0;
+  static const char *args[] = { "url0", "url1", "url" };
+  for (int j = 0; j < 3; j++) {
+    if (!getArg(args[j], arg))
+      continue;
     if (arg.length() > 0 && arg[0]!= '/') {
       message += "url path must start with '/'\n";
     } else {
-      if (g_vzurl.compareTo(arg)) {
-        message += "Set URL to '" + arg + "'\n";
-        g_vzurl = arg;
+      i = (j == 1); /* 0 and 2 => 0, 1 => 1 */
+      if (g_vzurl[i].compareTo(arg)) {
+        message += "Set " + label[i] + " URL to " + arg + "\n";
+        g_vzurl[i] = arg;
         change = true;
       } else
-        message += "URL not changed\n";
+        message += label[i] + " URL not changed\n";
     }
   }
   if (getArg("mqhost", arg)) {
@@ -579,10 +627,12 @@ void handle_vz() {
   if (! message.isEmpty())
     message += "\n";
   message += "VZ host:    " + g_vzhost + "\n";
-  message += "VZ URL:     " + g_vzurl + "\n";
+  for (i = 0; i < 2; i++)
+    message += "VZ URL:     " + g_vzurl[i] + " (" + label[i] + ")\n";
   message += "MQTT host:  " + g_mqtthost + "\n";
   message += "MQTT port:  " + String(g_mqttport) + "\n";
   message += "MQTT topic: " + g_mqtttopic + "\n";
+  message += "VZ host: " + g_vzhost + "\n";
   server.send(ret, "text/plain", message);
   if (change)
     prefs_save();
@@ -597,20 +647,20 @@ long code_from_str(const String s) {
   return c.toInt();
 }
 
-bool vz_push(int count) {
+bool vz_push(int count, int i = 0) {
   String response = "";
-  if (!check_vzserver())
+  if (!check_vzserver(i))
     return false;
   if (! client.connect(g_vzhost, 80)) {
     Serial.println("Connect to volkszaehler server failed");
     client.stop();
     return false;
   }
-  int p = g_pulses_sent;
+  int p = g_pulses_sent[i];
   if (count > p) {
     p = count;
   }
-  String cmd = "GET " + g_vzurl;
+  String cmd = "GET " + g_vzurl[i];
   cmd += "?operation=add&value=" + String(p);
   log_time();
   Serial.println(cmd);
@@ -622,6 +672,7 @@ bool vz_push(int count) {
   unsigned long timeout = millis();
   while (client.available() == 0) {
     if (millis() - timeout > 5000) {
+      log_time();
       Serial.println(">>> Client Timeout !");
       break;
     }
@@ -643,7 +694,7 @@ bool vz_push(int count) {
   else
     Serial.println(" => invalid return code?");
   if (ret == 200) {
-    g_pulses_sent = p;
+    g_pulses_sent[i] = p;
     return true;
   }
   return false;
@@ -657,20 +708,27 @@ void update_temp() {
 
 void commit_config() {
   log_time();
-  Serial.printf("COMMIT! last_p: %d, pulse: %d\r\n", last_pulse, g_pulses);
-  if (g_pulses != last_pulse)
+  Serial.printf("COMMIT! last_p: (%d, %d), pulse: (%d, %d)\r\n",
+                last_pulse[0], last_pulse[1], g_pulses[0], g_pulses[1]);
+  bool doit = false;
+  for (int i = 0; i < 2; i++) {
+    if (g_pulses[i] != last_pulse[i])
+      doit = true;
+    last_pulse[i] = g_pulses[i];
+  }
+  if (doit)
     prefs_save();
-  last_pulse = g_pulses;
 }
 
-void trigger_push() {
-  // Serial.println(String(__func__)+ " " + String(millis()));
-  update_push = true;
+void trigger_push(int i) {
+  log_time();
+  Serial.println(String(__func__)+ " " + String(i));
+  update_push[i] = true;
 }
 
 Ticker temp_timer;
 Ticker commit_timer;
-Ticker push_timer;
+Ticker push_timer[2];
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -713,40 +771,53 @@ void setup() {
     EEPROM.end();
     if (persist.sig[0] == 0xff || memcmp(persist.sig, "WATER1", 6)) {
       Serial.println("No old config...");
-      g_pulses = 0;
-      g_pulses_sent = 0;
-      g_vzhost = String();
-      g_vzurl = String();
+      /* all initialized globally */
     } else {
       Serial.print("Read pulses from eeprom: ");
       Serial.println(persist.pulses);
-      g_pulses = persist.pulses;
-      g_pulses_sent = persist.pulses_sent;
+      g_pulses[0] = persist.pulses;
+      g_pulses_sent[0] = persist.pulses_sent;
       g_vzhost = String(persist.vzhost);
-      g_vzurl = String(persist.vzurl);
+      g_vzurl[0] = String(persist.vzurl);
     }
     prefs_save();
   } else {
     Serial.println("reading Preferences...");
-    g_pulses = pref.getUInt("pulses", 0);
-    g_pulses_sent= pref.getUInt("pulses_sent", 0);
     g_vzhost = pref.getString("vzhost");
-    g_vzurl = pref.getString("vzurl");
     g_mqttport = pref.getUShort("mqttport", g_mqttport);
     g_mqtthost = pref.getString("mqtthost");
     g_mqtttopic = pref.getString("mqtttopic");
     mqtt_changed = check_mqserver();
-    pref.end();
+    if (version < 2) {
+      g_pulses[0] = pref.getUInt("pulses", 0);
+      g_pulses_sent[0] = pref.getUInt("pulses_sent", 0);
+      g_vzurl[0] = pref.getString("vzurl");
+      pref.remove("pulses");
+      pref.remove("pulses_sent");
+      pref.remove("vzurl");
+      pref.end();
+      prefs_save();
+    } else {
+      for (int i = 0; i < 2; i++) {
+        g_vzurl[i] = pref.getString(_vzurl[i]);
+        g_pulses[i] = pref.getUInt(_pulses[i], 0);
+        g_pulses_sent[i] = pref.getUInt(_pulses_sent[i], 0);
+      }
+      pref.end();
+    }
   }
-  pulses = g_pulses;
   Serial.print("VZhost: ");
   Serial.println(g_vzhost);
-  Serial.print("VZurl:  ");
-  Serial.println(g_vzurl);
-  Serial.print("Pulses: ");
-  Serial.println(g_pulses);
-  Serial.print("Sent:   ");
-  Serial.println(g_pulses_sent);
+  for (int i = 0; i < 2; i ++) {
+    pulses[i] = g_pulses[i];
+    Serial.println("=== " + label[i] + " ===");
+    Serial.print("VZurl:  ");
+    Serial.println(g_vzurl[i]);
+    Serial.print("Pulses: ");
+    Serial.println(g_pulses[i]);
+    Serial.print("Sent:   ");
+    Serial.println(g_pulses_sent[i]);
+  }
   Serial.print("MQTTID: ");
   Serial.println(g_mqttid);
   Serial.print("MQhost: ");
@@ -759,7 +830,8 @@ void setup() {
   Serial.println();
   pinMode(LED_BUILTIN, OUTPUT);
   pinMode(buttonPin, INPUT_PULLUP);
-  pinMode(inputPin, INPUT_PULLUP);
+  pinMode(inputPin[0], INPUT_PULLUP);
+  pinMode(inputPin[1], INPUT_PULLUP);
   digitalWrite(LED_BUILTIN, LED_ON);
 
   Serial.println();
@@ -778,11 +850,13 @@ void setup() {
   server.on("/config.html", handle_config);
   httpUpdater.setup(&server);
   server.begin();
-  attachInterrupt(digitalPinToInterrupt(inputPin), isr, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(inputPin[0]), isr0, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(inputPin[1]), isr1, CHANGE);
   /* attach_scheduled to avoid running in SYS CTX which might cause
    * LITTLEFS to trigger watchdog timeout resets */
   commit_timer.attach_scheduled(60, commit_config);
-  push_timer.attach(60, trigger_push);
+  for (int i = 0;i < 2; i++)
+    push_timer[i].attach(60, trigger_push, i);
 }
 
 unsigned long last_mqtt_reconnect = 0;
@@ -804,17 +878,19 @@ void loop() {
     start_WPS();
   }
   
-  if (g_pulses != pulses || update_push) {
-    log_time();
-    Serial.printf("Pulse update: %d\r\n", pulses);
-    if (vz_push(pulses)) {
-      if (!update_push)
-        push_timer.attach(60, trigger_push); /* re-arm */
-      last_push = millis();
+  for (int j = 0; j < 2; j++) {
+    if (g_pulses[j] != pulses[j] || update_push[j]) {
+      log_time();
+      Serial.printf("Pulse update: %d (%d %s)\r\n", pulses[j], j, label[j].c_str());
+      if (vz_push(pulses[j], j)) {
+        if (!update_push[j])
+          push_timer[j].attach(60, trigger_push, j); /* re-arm if not triggered by timer */
+        last_push[j] = millis();
+      }
+      update_push[j] = false;
     }
-    update_push = false;
+    g_pulses[j] = pulses[j];
   }
-  g_pulses = pulses;
   /* mqtt stuff */
   if (mqtt_changed) {
     Serial.println("MQTT config changed. Dis- and reconnecting...");
