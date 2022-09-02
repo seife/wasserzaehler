@@ -38,6 +38,10 @@ int inputPin[2] = { 5, 4 };  /* water, gas */
 #define WATER 0
 #define GAS 1
 String label[2] = { "Water", "Gas" };
+String unit[2] = { "l", "m³" };
+/* how much "unit" is one pulse? Should be made configurable... */
+double unit_factor[2] = { 1, 0.01 };
+int unit_frac[2] = { 0, 3 }; /* how many decimal digits */
 
 int tempPin = 14;  /* GPIO14 for DS18B20 */
 
@@ -329,7 +333,8 @@ void handle_index() {
     "<H1>Wasserzaehler</H1>\n"
     "<pre>";
   for (i = 0; i < 2; i++)
-    index += "Pulse:  " + String(pulses[i]) + " (" + label[i] +")\n";
+    index += "Pulse:  " + String(pulses[i]) + " (" + label[i] +"), " +
+             String(pulses[i] * unit_factor[i], unit_frac[i])+ unit[i] + "\n";
   index += "Uptime: " + time_string() + "\n";
   index += "MQTTid: " + g_mqttid + "\n";
   index += "Temp:   " + String(g_temp,4) + "°C (last_published " +String(uptime - last_temp)+ "ms ago)\n";
@@ -386,7 +391,8 @@ void handle_config() {
     resp +=
       "<form action=\"/pulses.html\">"
         "<tr>"
-          "<td>Pulses " + label[i] + ":</td><td><input name=\"set" + String(i)+ "\" value=\"";
+          "<td>Pulses " + label[i] + " (multiplied with " + String(unit_factor[i], unit_frac[i]) + unit[i] +
+          "):</td><td><input name=\"set" + String(i)+ "\" value=\"";
     resp += String(pulses[i]);
     resp += "\"></td>"
           "<td><button type=\"submit\">Submit</button></td>"
@@ -661,7 +667,7 @@ bool vz_push(int count, int i = 0) {
     p = count;
   }
   String cmd = "GET " + g_vzurl[i];
-  cmd += "?operation=add&value=" + String(p);
+  cmd += "?operation=add&value=" + String(p * unit_factor[i], unit_frac[i]);
   log_time();
   Serial.println(cmd);
   cmd += " HTTP/1.1\r\nHost: " + g_vzhost;
