@@ -251,7 +251,7 @@ void WiFiStatusCheck() {
 volatile uint32_t pulses[] = { 0, 0};
 volatile int hilo[2];
 volatile bool last_state;
-int last_pulse[] = { 0, 0 };
+uint32_t last_pulse[] = { 0, 0 };
 volatile unsigned long last_debounce[] = { 0, 0 };
 bool update_push[] = { false, false };
 unsigned long last_push[] = { 0, 0 };
@@ -262,7 +262,7 @@ const String sysinfo("Software version: " WASSER_VERSION ", built at: " __DATE__
 
 unsigned int debounce_delay = 100; // milliseconds
 
-void ICACHE_RAM_ATTR isr(int i) {
+void IRAM_ATTR isr(int i) {
   int in = digitalRead(inputPin[i]);
   if (hilo[i] == in)
     return;
@@ -280,11 +280,11 @@ void ICACHE_RAM_ATTR isr(int i) {
     pulses[i]++;
 }
 
-void ICACHE_RAM_ATTR isr0(void) {
+void IRAM_ATTR isr0(void) {
   isr(0);
 }
 
-void ICACHE_RAM_ATTR isr1(void) {
+void IRAM_ATTR isr1(void) {
   isr(1);
 }
 
@@ -446,7 +446,7 @@ void handle_pulses() {
     if (!getArg(args[i], arg))
       continue;
     noargs = false;
-    long p = arg . toInt();
+    uint32_t p = arg . toInt();
     if (p != 0) {
       if (p != pulses[i]) {
         message += label[i] + " pulses value set to " + String(p);
@@ -482,7 +482,7 @@ void handle_pulses_html() {
     if (!getArg(args[i], arg))
       continue;
     noargs = false;
-    long p = arg.toInt();
+    uint32_t p = arg . toInt();
     if (p != 0) {
       if (p != pulses[i]) {
         message += label[i] + " pulses value set to " + String(p);
@@ -606,7 +606,7 @@ void handle_vz() {
     }
   }
   if (getArg("mqport", arg)) {
-    long p = arg.toInt();
+    uint32_t p = arg . toInt();
     if (p != 0) {
       if (p != g_mqttport) {
         message += "MQTT port set to " + String(p) + "\n";
