@@ -741,7 +741,7 @@ Ticker commit_timer;
 Ticker push_timer[2];
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(10);
   // Serial.setDebugOutput(true); // send additional debug infos to serial
   for (int i=0; i < 10; i++)
     Serial.println("xxxxxxxxxxxxxxxxxxxxxxxxxxxx"); // bootloader has clobbered serial monitor
