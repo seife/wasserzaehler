@@ -192,7 +192,7 @@ void WiFiEvent(WiFiEvent_t event, system_event_info_t info) {
 
 #ifdef ESP8266
 ESP8266WebServer server(80);
-ESP8266HTTPUpdateServer httpUpdater;
+ESP8266HTTPUpdateServer httpUpdater(true);
 #else
 WebServer server(80);
 HTTPUpdateServer httpUpdater;
@@ -708,6 +708,10 @@ bool vz_push(int count, int i = 0) {
 
 bool temp_request = false;
 void update_temp() {
+#if 0
+  log_time();
+  Serial.println(String(__func__));
+#endif
   sensor.requestTemperatures();
   temp_request = true;
 }
