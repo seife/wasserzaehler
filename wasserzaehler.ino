@@ -869,20 +869,23 @@ void setup() {
     push_timer[i].attach(60, trigger_push, i);
 }
 
+/* milliseconds for blinking patterns */
+#define BLINKPERIOD 100
+/* delay in the loop() function */
+#define BLINKDELAY 10
+const int loop_len = strlen(_s[0]) * (BLINKPERIOD/BLINKDELAY);
 unsigned long last_mqtt_reconnect = 0;
 int i = 0;
 void loop() {
   WiFiStatusCheck();
-  // Serial.print(_s[state][i]);
-  if (_s[state][i] == '1') 
+  if (_s[state][i/(BLINKPERIOD/BLINKDELAY)] == '1')
     digitalWrite(LED_BUILTIN, LED_ON);   // turn the LED on (HIGH is the voltage level)
   else
     digitalWrite(LED_BUILTIN, LED_OFF);    // turn the LED off by making the voltage LOW
   i++;
-  if (i > 9) {
+  // i %= loop_len;
+  if (i >= loop_len)
     i = 0;
-    // Serial.println();
-  }
   if (digitalRead(buttonPin) == LOW) {
     Serial.println("Triggering WPS!");
     start_WPS();
@@ -944,5 +947,5 @@ void loop() {
   }
 
   server.handleClient();
-  delay(100);                       // wait for 0.1 seconds
+  delay(BLINKDELAY);
 }
