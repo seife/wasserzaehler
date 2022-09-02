@@ -1,7 +1,10 @@
 /*
   ESP8266/32 to interface a LJ18A3-8-Z/BX inductive
   sensor to count impulses from a water meter.
-  (C) 2020 Stefan Seyfried, License: WTFPL-2.0
+  ...and from a gas meter reed switch contact :-)
+  Now also measures temperature with an DS18B20 sensor
+      and publishes it via MQTT.
+  (C) 2020-2022 Stefan Seyfried, License: WTFPL-2.0
 
   * This program is free software. It comes without any warranty, to
   * the extent permitted by applicable law. You can redistribute it
@@ -11,6 +14,8 @@
 
   GPIO0 (built in button): Trigger WPS for WIFI connect
   GPIO5: open-collector input from inductive sensor
+  GPIO4: reed switch contact for gas meter, connected to ground
+  GPIO14: DS18B20 one-wire temperature sensor
 
   LED signaling:
   * LED off:       wifi connected
