@@ -764,7 +764,7 @@ void setup() {
     Serial.println();
     sensor.setWaitForConversion(false);
     sensor.requestTemperatures();
-    temp_timer.attach(20, update_temp);
+    temp_timer.attach_scheduled(20, update_temp);
   } else {
     Serial.println("Sensor Address failed?");
   }
