@@ -42,8 +42,9 @@ int buttonPin = 0; /* button on GPIO0 */
 int inputPin[2] = { 5, 4 };  /* water, gas */
 #define WATER 0
 #define GAS 1
-String label[2] = { "Water", "Gas" };
-String unit[2] = { "l", "m³" };
+#define TEMP 2
+String label[3] = { "Water", "Gas", "Temperature" };
+String unit[3] = { "l", "m³", "°C" };
 /* how much "unit" is one pulse? Should be made configurable... */
 double unit_factor[2] = { 1, 0.01 };
 int unit_frac[2] = { 0, 3 }; /* how many decimal digits */
@@ -88,7 +89,7 @@ const char* _vzurl[2] = { "vzurl0", "vzurl1" };
 /* temperature measurement stuff */
 String g_mqtthost;
 uint16_t g_mqttport = 1883; /* default */
-String g_mqtttopic;
+String g_mqtttopic[3];
 String g_mqttid = "no sensor";
 bool mqtt_changed = false;    /* config change */
 bool mqtt_server_set = false; /* complete config available */
@@ -263,7 +264,7 @@ volatile int hilo[2];
 volatile bool last_state;
 uint32_t last_pulse[] = { 0, 0 };
 volatile unsigned long last_debounce[] = { 0, 0 };
-bool update_push[] = { false, false };
+bool update_push[] = { false, false, false, false };
 unsigned long last_push[] = { 0, 0 };
 unsigned long last_temp = 0;
 Preferences pref;
@@ -324,8 +325,22 @@ bool check_vzserver(int i) {
   return (!g_vzhost.isEmpty() && !g_vzurl[i].isEmpty());
 }
 
-bool check_mqserver() {
-  return (!g_mqtthost.isEmpty() && !g_mqtttopic.isEmpty() && g_mqttport);
+bool check_mqserver(int what = -1) {
+  if (g_mqtthost.isEmpty() || ! g_mqttport)
+    return false;
+  switch (what) {
+    case TEMP:
+    case WATER:
+    case GAS:
+      return !g_mqtttopic[what].isEmpty();
+    default:
+      break;
+  }
+  for (int i = TEMP; i >= 0; i--) {
+    if (! g_mqtttopic[i].isEmpty())
+      return true;
+  }
+  return false;
 }
 
 void handle_index() {
@@ -358,10 +373,12 @@ void handle_index() {
       index += "Last value: " + String(g_pulses_sent[i]) + " (" + label[i]+ ")\n";
     }
   }
-  if (check_mqserver()) {
-    index += "\nMQTT server name:" + g_mqtthost +
-             "\nMQTT server port:" + String(g_mqttport) +
-             "\nMQTT topic:      " + g_mqtttopic + "\n";
+  if (check_mqserver())
+    index += "\nMQTT server name:  " + g_mqtthost +
+             "\nMQTT server port:  " + String(g_mqttport) +"\n";
+  for (i = TEMP; i >= 0; i--) {
+    if (check_mqserver(i))
+      index += "MQTT topic (" + label[i] + "): " + g_mqtttopic[i] + "\n";
   }
   index += "</pre>\n"
     "<br>\n<a href=\"/config.html\">Configuration page</a>\n"
@@ -379,6 +396,7 @@ void handle_config() {
     "<title>Wasserzaehler Configuration</title>\n"
     "</head>\n<body>\n"
     "<H1>Wasserzaehler Configuration</H1>\n"
+    "<H2>Volkszaehler Configuration</H2>\n"
     "<table>\n"
     "<form action=\"/vz\">"
       "<tr>"
@@ -410,7 +428,7 @@ void handle_config() {
       "</form>\n";
   }
   resp +=
-    "<tr><td><h1>Temperature Sensor Configuration</h2></td></tr>\n"
+    "<tr><td><h2>MQTT Client Configuration</h2></td></tr>\n"
     "<form action=\"/vz\">"
       "<tr>"
         "<td>MQTT Server Hostname:</td><td><input name=\"mqhost\" value=\"";
@@ -420,15 +438,20 @@ void handle_config() {
         "<td>MQTT Server Port:</td><td><input name=\"mqport\" value=\"";
   resp += g_mqttport;
   resp += "\"></td>"
-      "</tr>\n<tr>"
-        "<td>MQTT Topic:</td><td><input name=\"mqtopic\" value=\"";
-  resp += g_mqtttopic;
-  resp += "\"></td>"
-        "<td><button type=\"submit\">Submit</button></td>"
-      "</tr>\n"
+      "</tr>\n";
+  for (int i = TEMP; i >= 0; i--) {
+    resp += "<tr><td>MQTT " + label[i] + " Topic:</td><td><input name=\"mqtopic" + String(i) + "\" value=\"";
+    resp += g_mqtttopic[i];
+    resp += "\"></td>";
+    if (i == 0)
+      resp += "<td><button type=\"submit\">Submit</button></td>";
+    resp +="</tr>\n";
+  }
+  resp +=
     "</form>\n"
     "</table>\n"
     "<p><a href=\"/update\">Software Update</a>\n"
+    "<br><a href=\"/index.html\">Main page</a>\n"
     "<p>" + sysinfo + "\n"
     "</body>\n</html>\n";
   server.send(200, "text/html", resp);
@@ -556,13 +579,17 @@ void prefs_save() {
   for (int i = 0; i < 2; i++)
     pref_putString(_vzurl[i], g_vzurl[i]);
   pref_putString("mqtthost", g_mqtthost);
-  pref_putString("mqtttopic", g_mqtttopic);
+  pref_putString("mqtttopic", g_mqtttopic[TEMP]);
+  pref_putString("mqtttopic_w", g_mqtttopic[WATER]);
+  pref_putString("mqtttopic_g", g_mqtttopic[GAS]);
 #else
   pref.putString("vzhost", g_vzhost);
   for (int i = 0; i < 2; i++)
     pref.putString(_vzurl[i], g_vzurl[i]);
   pref.putString("mqtthost", g_mqtthost);
-  pref.putString("mqtttopic", g_mqtttopic);
+  pref.putString("mqtttopic", g_mqtttopic[TEMP]);
+  pref.putString("mqtttopic_w", g_mqtttopic[WATER]);
+  pref.putString("mqtttopic_g", g_mqtttopic[GAS]);
 #endif
   pref.putUShort("mqttport", g_mqttport);
   pref.end();
@@ -631,24 +658,28 @@ void handle_vz() {
       message += "invalid MQTT port value '" + arg + "'\n";
     }
   }
-  if (getArg("mqtopic", arg)) {
-    if (g_mqtttopic.compareTo(arg)) {
-      message += "Set MQTT Topic to " + arg + "\n";
-      g_mqtttopic = arg;
-      change = true;
-      mqtt_changed = true;
-    } else
-      message += "MQTT Topic not changed\n";
+  static const char *args2[] = { "mqtopic0", "mqtopic1", "mqtopic2" };
+  for (int j = 0; j <= TEMP; j++) {
+    if (getArg(args2[j], arg)) {
+      if (g_mqtttopic[j].compareTo(arg)) {
+        message += "Set MQTT " + label[j] + " Topic to " + arg + "\n";
+        g_mqtttopic[j] = arg;
+        change = true;
+        mqtt_changed = true;
+      } else
+        message += "MQTT " + label[j] + " Topic not changed\n";
+    }
   }
   if (! message.isEmpty())
     message += "\n";
   message += "VZ host:    " + g_vzhost + "\n";
   for (i = 0; i < 2; i++)
     message += "VZ URL:     " + g_vzurl[i] + " (" + label[i] + ")\n";
-  message += "MQTT host:  " + g_mqtthost + "\n";
-  message += "MQTT port:  " + String(g_mqttport) + "\n";
-  message += "MQTT topic: " + g_mqtttopic + "\n";
-  message += "VZ host: " + g_vzhost + "\n";
+  message += "MQTT host:        " + g_mqtthost + "\n";
+  message += "MQTT port:        " + String(g_mqttport) + "\n";
+  message += "MQTT temp topic:  " + g_mqtttopic[TEMP] + "\n";
+  message += "MQTT water topic: " + g_mqtttopic[WATER] + "\n";
+  message += "MQTT gas topic:   " + g_mqtttopic[GAS] + "\n";
   server.send(ret, "text/plain", message);
   if (change)
     prefs_save();
@@ -661,6 +692,22 @@ long code_from_str(const String s) {
   if (c.length() < 3)
     return -1;
   return c.toInt();
+}
+
+bool mq_push(int count, int i = 0) {
+  if (!check_mqserver(i))
+    return false;
+  switch (i) {
+    case WATER:
+    case GAS:
+      Serial.println(String(__func__) + " publish '" + g_mqtttopic[i] + "' " + String(count));
+      return mqtt_client.publish((g_mqtttopic[i]).c_str(), String(count).c_str());
+    default:
+      log_time();
+      Serial.println(String(__func__) + " ERROR! invalid type(i): " + String(i)+ " count: " + String(count));
+      break;
+  }
+  return false;
 }
 
 bool vz_push(int count, int i = 0) {
@@ -748,7 +795,7 @@ void trigger_push(int i) {
 
 Ticker temp_timer;
 Ticker commit_timer;
-Ticker push_timer[2];
+Ticker push_timer[2 + 2]; /* 2 vz, 2 mqtt */
 void setup() {
   Serial.begin(115200);
   delay(10);
@@ -776,6 +823,9 @@ void setup() {
     sensor.requestTemperatures();
     temp_timer.attach_scheduled(20, update_temp);
   } else {
+    char tmp[10];
+    snprintf(tmp, sizeof(tmp), "%08X", ESP.getChipId());
+    g_mqttid = String(tmp);
     Serial.println("Sensor Address failed?");
   }
 
@@ -806,7 +856,9 @@ void setup() {
     g_vzhost = pref.getString("vzhost");
     g_mqttport = pref.getUShort("mqttport", g_mqttport);
     g_mqtthost = pref.getString("mqtthost");
-    g_mqtttopic = pref.getString("mqtttopic");
+    g_mqtttopic[TEMP]  = pref.getString("mqtttopic");
+    g_mqtttopic[WATER] = pref.getString("mqtttopic_w");
+    g_mqtttopic[GAS]   = pref.getString("mqtttopic_g");
     mqtt_changed = check_mqserver();
     if (version < 2) {
       g_pulses[0] = pref.getUInt("pulses", 0);
@@ -838,14 +890,16 @@ void setup() {
     Serial.print("Sent:   ");
     Serial.println(g_pulses_sent[i]);
   }
-  Serial.print("MQTTID: ");
+  Serial.print("MQTTID:  ");
   Serial.println(g_mqttid);
-  Serial.print("MQhost: ");
+  Serial.print("MQhost:  ");
   Serial.println(g_mqtthost);
-  Serial.print("MQport: ");
+  Serial.print("MQport:  ");
   Serial.println(g_mqttport);
-  Serial.print("MQtopic:");
-  Serial.println(g_mqtttopic);
+  for (int i = TEMP; i >= 0; i--) {
+    Serial.print("MQtopic: '" + g_mqtttopic[i] + "' (");
+    Serial.println(label[i] + ")");
+  }
 
   Serial.println();
   pinMode(LED_BUILTIN, OUTPUT);
@@ -875,7 +929,7 @@ void setup() {
   /* attach_scheduled to avoid running in SYS CTX which might cause
    * LITTLEFS to trigger watchdog timeout resets */
   commit_timer.attach_scheduled(60, commit_config);
-  for (int i = 0;i < 2; i++)
+  for (int i = 0;i < 2 + 2; i++)
     push_timer[i].attach(60, trigger_push, i);
 }
 
@@ -911,6 +965,15 @@ void loop() {
         last_push[j] = millis();
       }
       update_push[j] = false;
+    }
+    if (g_pulses[j] != pulses[j] || update_push[j + 2]) {
+      log_time();
+      Serial.printf("Pulse update MQ: %d (%d %s)\r\n", pulses[j], j, label[j].c_str());
+      if (mq_push(pulses[j], j)) {
+        if (!update_push[j+ 2])
+          push_timer[j + 2].attach(60, trigger_push, j + 2); /* re-arm if not triggered by timer */
+      }
+      update_push[j + 2] = false;
     }
     g_pulses[j] = pulses[j];
   }
@@ -949,9 +1012,9 @@ void loop() {
       Serial.printf("T: %.4f °C ", g_temp);
       Serial.println(String(g_temp, 1));
       temp_request = false;
-      if (_T != DEVICE_DISCONNECTED_RAW && check_mqserver()) {
+      if (_T != DEVICE_DISCONNECTED_RAW && check_mqserver(TEMP)) {
         last_temp = millis();
-        mqtt_client.publish((g_mqtttopic).c_str(), String(g_temp, 1).c_str());
+        mqtt_client.publish((g_mqtttopic[TEMP]).c_str(), String(g_temp, 1).c_str());
       }
     }
   }
