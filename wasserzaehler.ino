@@ -143,6 +143,10 @@ void wpsInitConfig() {
   strcpy(config.factory_info.device_name, ESP_DEVICE_NAME);
 }
 
+/*
+ * FIXME: THIS IS WRONG, ENUM VALUES ARE NOW ARDUINO_EVENT_STA...
+ * commented out to intentionally break ESP32 build until this is fixed...
+ *
 void WiFiEvent(WiFiEvent_t event, system_event_info_t info) {
   switch (event) {
     case SYSTEM_EVENT_STA_START:
@@ -192,6 +196,7 @@ void WiFiEvent(WiFiEvent_t event, system_event_info_t info) {
       break;
   }
 }
+*/
 #endif
 
 
