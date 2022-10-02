@@ -38,6 +38,14 @@
 #define WASSER_VERSION "unknown"
 #endif
 
+#include <EEPROM.h>
+#include <Preferences.h>
+#include <Ticker.h>
+
+#include <OneWire.h>
+#include <DallasTemperature.h>
+#include <PubSubClient.h>
+
 int buttonPin = 0; /* button on GPIO0 */
 int inputPin[2] = { 5, 4 };  /* water, gas */
 #define WATER 0
@@ -96,14 +104,6 @@ bool mqtt_server_set = false; /* complete config available */
 float g_temp = -127.0;
 
 int state = STATE_DISC;
-
-#include <EEPROM.h>
-#include <Preferences.h>
-#include <Ticker.h>
-
-#include <OneWire.h>
-#include <DallasTemperature.h>
-#include <PubSubClient.h>
 
 DeviceAddress DS18B20_Address;
 OneWire oneWire(tempPin);
