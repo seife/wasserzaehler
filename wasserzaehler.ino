@@ -38,8 +38,20 @@
 #define WASSER_VERSION "unknown"
 #endif
 
+#ifndef LEGACY_UPGRADE
+/* 2 == can upgrade from EEPROM based setting
+ * 1 == can upgrade from Preferences based setting */
+#define LEGACY_UPGRADE 1
+#endif
+/* legacy for backwards compatibility */
+#if LEGACY_UPGRADE > 1
 #include <EEPROM.h>
+#endif
+#if LEGACY_UPGRADE
 #include <Preferences.h>
+#endif
+#include <LittleFS.h>
+#include <ArduinoJson.h>
 #include <Ticker.h>
 
 #include <OneWire.h>
@@ -75,6 +87,7 @@ const char *_s[4] = {
   "1010101010"  // FAIL
 };
 
+#if LEGACY_UPGRADE > 1
 /* old */
 struct eeprom_state {
   char sig[8];  /* WATER */
@@ -83,6 +96,7 @@ struct eeprom_state {
   char vzhost[48]; /* hostname */
   char vzurl[192]; /* total: 256 */
 };
+#endif
 
 /* new */
 uint32_t g_pulses[2] = { 0, 0 };
@@ -90,9 +104,25 @@ uint32_t g_pulses_sent[2] = { 0, 0 };
 String g_vzhost;
 String g_vzurl[2] = { "", "" };
 
+/* implement own config saving into a single LittleFS file,
+ * formatted as JSON
+ * the previously used Preferences library saves each config item into
+ * a separate file, which caused occasional huge latency spikes during
+ * preferences saving (in the area of 15-20 SECONDS!), maybe due to
+ * garbage collection in LittleFS.
+ * Saving the whole configuration into a single JSON structured file
+ * takes significantly less than 1s (usually around 100-150ms). */
+uint8_t file_buffer[4096]; /* maximum config size, static buffer */
+#define MAX_FILESIZE (sizeof(file_buffer) -1)
+#define CFG_FILE "/prefs.json"
+#define TMP_FILE "/prefs_new.json"
+uint32_t max_save_ms = 0;  /* for statistics */
+/* actually only 12 elements used now */
+const int json_capacity_deserialize = JSON_OBJECT_SIZE(20);
 const char* _pulses[2] = { "pulses0", "pulses1" };
 const char* _pulses_sent[2] = { "pulses_sent0", "pulses_sent1" };
 const char* _vzurl[2] = { "vzurl0", "vzurl1" };
+const char* _mqttopic[3] = { "mqtttopic_w", "mqtttopic_g", "mqtttopic_t" };
 
 /* temperature measurement stuff */
 String g_mqtthost;
@@ -269,7 +299,9 @@ volatile unsigned long last_debounce[] = { 0, 0 };
 bool update_push[] = { false, false, false, false };
 unsigned long last_push[] = { 0, 0 };
 unsigned long last_temp = 0;
+#if LEGACY_UPGRADE
 Preferences pref;
+#endif
 
 const String sysinfo("Software version: " WASSER_VERSION ", built at: " __DATE__ " " __TIME__);
 
@@ -384,7 +416,7 @@ void handle_index() {
   }
   index += "</pre>\n"
     "<br>\n<a href=\"/config.html\">Configuration page</a>\n"
-    "<p>" + sysinfo + "\n"
+    "<p>" + sysinfo + " max_save_ms: " + String(max_save_ms) +"\n"
     "</body>\n";
   server.send(200, "text/html", index);
 }
@@ -454,7 +486,7 @@ void handle_config() {
     "</table>\n"
     "<p><a href=\"/update\">Software Update</a>\n"
     "<br><a href=\"/index.html\">Main page</a>\n"
-    "<p>" + sysinfo + "\n"
+    "<p>" + sysinfo + " max_save_ms: " + String(max_save_ms) +"\n"
     "</body>\n</html>\n";
   server.send(200, "text/html", resp);
 }
@@ -555,6 +587,12 @@ bool checkhost(const char *host, int len) {
   return true;
 }
 
+String JSONgetString(DynamicJsonDocument &doc, const char *key) {
+  const char *tmp = doc[key];
+  return String(tmp);
+}
+
+#if 0
 #define PREF_ISSUE1 1
 #if PREF_ISSUE1
   /* workaround for
@@ -596,6 +634,211 @@ void prefs_save() {
   pref.putUShort("mqttport", g_mqttport);
   pref.end();
 }
+#else
+/* dynamically determine sufficient DynamicJsonDocument size
+ * just retry until it no longer returns 0 :-) */
+size_t prefs_serialize(int capacity) {
+  DynamicJsonDocument doc(capacity);
+  doc["vzhost"] = g_vzhost;
+  doc["mqttport"] = g_mqttport;
+  doc["mqtthost"] = g_mqtthost;
+  for (int i = TEMP; i >= 0; i--) {
+    doc[_mqttopic[i]] = g_mqtttopic[i];
+  }
+  for (int i = 0; i < 2; i++) {
+    doc[_vzurl[i]] = g_vzurl[i];
+    doc[_pulses[i]] = g_pulses[i];
+    doc[_pulses_sent[i]] = g_pulses_sent[i];
+  }
+  if (doc.overflowed())
+    return 0;
+  return serializeJson(doc, file_buffer);
+}
+
+void prefs_save() {
+  /* enough for "normal" hostname / vz url lengths */
+  static int json_capacity = 512;
+  uint32_t now = millis();
+  log_time();
+  Serial.println("start saving " CFG_FILE);
+  memset(file_buffer, 0, sizeof(file_buffer));
+  size_t to_write = 0;
+  while (true) {
+    if ((to_write = prefs_serialize(json_capacity)) > 0)
+      break;
+    Serial.printf("prefs_save DEBUG: to_write: %u capa: %d\r\n", to_write, json_capacity);
+    json_capacity += 128; /* increase capacity and retry */
+  }
+  if (to_write > MAX_FILESIZE) {
+    Serial.println("PANIC: config file too big!");
+    return;
+  }
+  File cfg = LittleFS.open(CFG_FILE, "r");
+  bool change = !cfg || (cfg.size() != to_write); /* file size is not the same => surely different */
+  if (! change) {
+    size_t i = 0;
+    while (i < to_write) { /* to_write == cfg.size() */
+      if (cfg.read() != file_buffer[i++]) {
+        change = true;
+        break;
+      }
+    }
+  }
+  cfg.close();
+  // Serial.println((char *) file_buffer);
+  if (! change) {
+    log_time();
+    Serial.println("no change");
+    return;
+  }
+  File tmp = LittleFS.open(TMP_FILE, "w");
+  size_t r = tmp.write(file_buffer, to_write);
+  tmp.close();
+  if (r != to_write)
+    Serial.println("PANIC: cfg.write returned wrong " + String(r) + " != " + String(to_write));
+  else
+    LittleFS.rename(TMP_FILE, CFG_FILE);
+  uint32_t t = millis() - now;
+  log_time();
+  Serial.printf("took %u ms to write %s (%u bytes)\r\n", t, CFG_FILE, to_write);
+  if (t > max_save_ms)
+    max_save_ms = t;
+}
+#endif
+
+bool legacy_prefs_read_clear() {
+  bool ret = false;
+#if LEGACY_UPGRADE > 1
+  /* check if old config in EEPROM class exists */
+  log_time();
+  Serial.println("Checking for old EEPROM config...");
+  eeprom_state persist;
+  EEPROM.begin(512);
+  EEPROM.get(0, persist);
+  if (persist.sig[0] == 0xff || memcmp(persist.sig, "WATER1", 6)) {
+    Serial.println("No old config...");
+    /* all initialized globally */
+  } else {
+    Serial.print("Read pulses from eeprom: ");
+    Serial.println(persist.pulses);
+    g_pulses[0] = persist.pulses;
+    g_pulses_sent[0] = persist.pulses_sent;
+    g_vzhost = String(persist.vzhost);
+    g_vzurl[0] = String(persist.vzurl);
+    ret = true;
+  }
+  /* clear after reading */
+  memset(&persist, 0xff, sizeof(persist));
+  EEPROM.put(0, persist);
+  EEPROM.commit();
+  EEPROM.end();
+#endif
+#if LEGACY_UPGRADE
+  /* legacy Preferences config */
+  log_time();
+  Serial.println("reading legacy Preferences config...");
+  pref.begin("wasserzaehler", false);
+  int version = pref.getInt("version", -1);
+  log_time();
+  if (version == -1) {
+    Serial.println("no legacy Preferences config found");
+    return ret;
+  }
+  Serial.println("reading Preferences...");
+  g_vzhost = pref.getString("vzhost");
+  g_mqttport = pref.getUShort("mqttport", g_mqttport);
+  g_mqtthost = pref.getString("mqtthost");
+  g_mqtttopic[TEMP]  = pref.getString("mqtttopic");
+  g_mqtttopic[WATER] = pref.getString("mqtttopic_w");
+  g_mqtttopic[GAS]   = pref.getString("mqtttopic_g");
+  mqtt_changed = check_mqserver();
+  if (version < 2) {
+    g_pulses[0] = pref.getUInt("pulses", 0);
+    g_pulses_sent[0] = pref.getUInt("pulses_sent", 0);
+    g_vzurl[0] = pref.getString("vzurl");
+    pref.remove("pulses");
+    pref.remove("pulses_sent");
+    pref.remove("vzurl");
+  } else {
+    for (int i = 0; i < 2; i++) {
+    g_vzurl[i] = pref.getString(_vzurl[i]);
+    g_pulses[i] = pref.getUInt(_pulses[i], 0);
+    g_pulses_sent[i] = pref.getUInt(_pulses_sent[i], 0);
+    }
+  }
+  pref.clear();
+#endif
+  return ret;
+}
+
+bool prefs_read_json() {
+  log_time();
+  if (! LittleFS.exists(CFG_FILE)) {
+    Serial.println(CFG_FILE " does not exist.");
+    return false;
+  }
+  Serial.println("start reading " CFG_FILE);
+  File cfg = LittleFS.open(CFG_FILE, "r");
+  size_t to_read = cfg.size();
+  if (to_read > MAX_FILESIZE) {
+    Serial.println("PANIC: " CFG_FILE " too big! " + String(to_read));
+    return false;
+  }
+
+  size_t done = 0, r = 0;
+  memset(file_buffer, 0, sizeof(file_buffer));
+  while (done < to_read) {
+    r = cfg.read(&file_buffer[done], to_read - done);
+    if (r < 1) {
+      Serial.println("PANIC: cfg.read returned < 1! " + String(r) + ", done: " + String(done));
+      break;
+    }
+    done += r;
+  }
+  log_time();
+  Serial.println("finished reading " CFG_FILE);
+  Serial.println((char *)(file_buffer));
+  DynamicJsonDocument doc(json_capacity_deserialize);
+  DeserializationError err = deserializeJson(doc, file_buffer);
+  if (err) {
+    Serial.print("PANIC: parsing " CFG_FILE " failed! ");
+    Serial.println(err.f_str());
+    return false;
+  }
+  g_vzhost = JSONgetString(doc, "vzhost");
+  g_mqttport = doc["mqttport"] | g_mqttport;
+  g_mqtthost = JSONgetString(doc, "mqtthost");
+  for (int i = TEMP; i >= 0; i--)
+    g_mqtttopic[i]  = JSONgetString(doc, _mqttopic[i]);
+  mqtt_changed = check_mqserver();
+  for (int i = 0; i < 2; i++) {
+    g_vzurl[i] = JSONgetString(doc, _vzurl[i]);
+    g_pulses[i] = doc[_pulses[i]];
+    g_pulses_sent[i] = doc[_pulses_sent[i]];
+  }
+  return true;
+}
+
+/* debugging functions for LittleFS content */
+void recursive_list_directory(String name) {
+  //Serial.println("==> entering Directory " + name);
+  Dir dir = LittleFS.openDir(name);
+  while (dir.next()) {
+    Serial.print(name);
+    Serial.print(dir.fileName());
+    Serial.print("\t");
+    Serial.println(dir.fileSize());
+    if (dir.isDirectory())
+      recursive_list_directory(name + dir.fileName() + "/");
+  }
+}
+
+void debugFS() {
+  Serial.println("==== LittleFS contents start ====");
+  recursive_list_directory("/");
+  Serial.println("==== LittleFS contents end   ====");
+}
+/* end debugging */
 
 void handle_vz() {
   String message = "";
@@ -702,7 +945,7 @@ bool mq_push(int count, int i = 0) {
   switch (i) {
     case WATER:
     case GAS:
-      Serial.println(String(__func__) + " publish '" + g_mqtttopic[i] + "' " + String(count));
+      //Serial.println(String(__func__) + " publish '" + g_mqtttopic[i] + "' " + String(count));
       return mqtt_client.publish((g_mqtttopic[i]).c_str(), String(count).c_str());
     default:
       log_time();
@@ -831,53 +1074,17 @@ void setup() {
     Serial.println("Sensor Address failed?");
   }
 
-  pref.begin("wasserzaehler", false);
-  int version = pref.getInt("version", -1);
-  if (version == -1) {
-    /* check if old config in EEPROM class exists */
-    pref.end();
-    Serial.println("Checking for old config...");
-    eeprom_state persist;
-    EEPROM.begin(512);
-    EEPROM.get(0, persist);
-    EEPROM.end();
-    if (persist.sig[0] == 0xff || memcmp(persist.sig, "WATER1", 6)) {
-      Serial.println("No old config...");
-      /* all initialized globally */
-    } else {
-      Serial.print("Read pulses from eeprom: ");
-      Serial.println(persist.pulses);
-      g_pulses[0] = persist.pulses;
-      g_pulses_sent[0] = persist.pulses_sent;
-      g_vzhost = String(persist.vzhost);
-      g_vzurl[0] = String(persist.vzurl);
-    }
-    prefs_save();
-  } else {
-    Serial.println("reading Preferences...");
-    g_vzhost = pref.getString("vzhost");
-    g_mqttport = pref.getUShort("mqttport", g_mqttport);
-    g_mqtthost = pref.getString("mqtthost");
-    g_mqtttopic[TEMP]  = pref.getString("mqtttopic");
-    g_mqtttopic[WATER] = pref.getString("mqtttopic_w");
-    g_mqtttopic[GAS]   = pref.getString("mqtttopic_g");
-    mqtt_changed = check_mqserver();
-    if (version < 2) {
-      g_pulses[0] = pref.getUInt("pulses", 0);
-      g_pulses_sent[0] = pref.getUInt("pulses_sent", 0);
-      g_vzurl[0] = pref.getString("vzurl");
-      pref.remove("pulses");
-      pref.remove("pulses_sent");
-      pref.remove("vzurl");
-      pref.end();
+  if (!LittleFS.begin()) {
+    log_time();
+    Serial.println("PANIC?: LittleFS.begin() FAILED!");
+  }
+  debugFS();
+  bool legacy = legacy_prefs_read_clear();
+  if (!prefs_read_json()) {
+    if (legacy) {
+      log_time();
+      Serial.println("saving converted preferences");
       prefs_save();
-    } else {
-      for (int i = 0; i < 2; i++) {
-        g_vzurl[i] = pref.getString(_vzurl[i]);
-        g_pulses[i] = pref.getUInt(_pulses[i], 0);
-        g_pulses_sent[i] = pref.getUInt(_pulses_sent[i], 0);
-      }
-      pref.end();
     }
   }
   Serial.print("VZhost: ");
