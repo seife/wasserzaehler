@@ -228,6 +228,8 @@ void start_WPS() {
   Serial.println("WiFi.psk:  " + WiFi.psk());
   if (WiFi.SSID().length() == 0 && old_ssid.length() > 0) {
     WiFi.begin(old_ssid, old_psk);
+  } else {
+    WiFi.begin();
   }
 #else
   WiFi.mode(WIFI_MODE_STA);
@@ -246,16 +248,16 @@ void start_WPS() {
 void WiFiStatusCheck() {
   static wl_status_t last = WL_NO_SHIELD;
   wl_status_t now = WiFi.status();
+  if (now == WL_CONNECTED)
+    state = STATE_CONN;
+  else
+    state = STATE_DISC;
   if (now == last)
     return;
   Serial.print("WiFI status changed from: ");
   Serial.print(last);
   Serial.print(" to: ");
   Serial.println(now);
-  if (now == WL_CONNECTED)
-    state = STATE_CONN;
-  else
-    state = STATE_DISC;
   last = now;
 }
 
